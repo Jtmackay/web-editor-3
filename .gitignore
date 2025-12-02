@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-electron
+.DS_Store
+Thumbs.db
+*.log
+/.cache
+/.turbo
+/.vscode

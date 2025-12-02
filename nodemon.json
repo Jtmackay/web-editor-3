@@ -1,0 +1,11 @@
+{
+  "watch": [
+    "electron"
+  ],
+  "ext": "js,cjs",
+  "ignore": [
+    "dist",
+    "dist-electron",
+    "node_modules"
+  ]
+}
