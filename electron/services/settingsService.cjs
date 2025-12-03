@@ -32,6 +32,23 @@ class SettingsService {
     this.store.set('syncIgnorePatterns', safe)
     return safe
   }
+  getSyncHideIgnoredInExplorer() {
+    return !!this.store.get('syncHideIgnoredInExplorer', false)
+  }
+  setSyncHideIgnoredInExplorer(hide) {
+    const value = !!hide
+    this.store.set('syncHideIgnoredInExplorer', value)
+    return value
+  }
+  getSyncHiddenPaths() {
+    const raw = this.store.get('syncHiddenPaths', [])
+    return Array.isArray(raw) ? raw.map(p => String(p)) : []
+  }
+  setSyncHiddenPaths(paths) {
+    const safe = Array.isArray(paths) ? paths.map(p => String(p)) : []
+    this.store.set('syncHiddenPaths', safe)
+    return safe
+  }
   getSyncFolder() {
     return this.store.get('syncFolder', '')
   }

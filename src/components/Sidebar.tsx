@@ -156,6 +156,10 @@ const SettingsPanel: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [ignorePatterns, setIgnorePatterns] = useState<string[]>([])
+  const [hideIgnoredInExplorer, setHideIgnoredInExplorer] = useState(false)
+  const [hiddenIgnorePatterns, setHiddenIgnorePatterns] = useState<string[]>([])
+  const [newIgnorePattern, setNewIgnorePattern] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -163,10 +167,11 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const [syncRes, baseUrlRes, startAfterRes] = await Promise.all([
+        const [syncRes, baseUrlRes, startAfterRes, ignoreRes] = await Promise.all([
           electronAPI.settingsGetSyncFolder(),
           electronAPI.settingsGetPreviewBaseUrl(),
-          electronAPI.settingsGetPreviewStartAfter()
+          electronAPI.settingsGetPreviewStartAfter(),
+          electronAPI.settingsGetSyncIgnore()
         ])
         if (mounted && syncRes.success && typeof syncRes.path === 'string') {
           setSyncFolder(syncRes.path)
@@ -176,6 +181,17 @@ const SettingsPanel: React.FC = () => {
         }
         if (mounted && startAfterRes.success && typeof startAfterRes.startAfter === 'string') {
           setPreviewStartAfter(startAfterRes.startAfter)
+        }
+        if (mounted && ignoreRes.success) {
+          if (Array.isArray(ignoreRes.patterns)) {
+            setIgnorePatterns(ignoreRes.patterns)
+          }
+          if (typeof ignoreRes.hideInExplorer === 'boolean') {
+            setHideIgnoredInExplorer(ignoreRes.hideInExplorer)
+          }
+          if (Array.isArray(ignoreRes.hiddenPaths)) {
+            setHiddenIgnorePatterns(ignoreRes.hiddenPaths)
+          }
         }
       } catch (err) {
         console.error('Failed to load sync folder', err)
@@ -295,6 +311,137 @@ const SettingsPanel: React.FC = () => {
             {status}
           </div>
         )}
+      </section>
+      <section>
+        <h4 className="font-semibold mb-1">Ignored files & patterns</h4>
+        <p className="text-vscode-text-muted mb-2">
+          Configure which remote files should be skipped during sync. Patterns without a <code>/</code> apply to
+          filenames (match at the start or end), for example <code>._</code> or <code>.bak</code>. Patterns that start
+          with <code>/</code> act as path prefixes (for example <code>/logs</code>).
+        </p>
+        <div className="flex gap-2 mb-2">
+          <input
+            type="text"
+            value={newIgnorePattern}
+            onChange={(e) => setNewIgnorePattern(e.target.value)}
+            onKeyDown={async (e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                const raw = newIgnorePattern.trim()
+                if (!raw) return
+                if (ignorePatterns.includes(raw)) {
+                  setNewIgnorePattern('')
+                  return
+                }
+                const next = [...ignorePatterns, raw]
+                setIgnorePatterns(next)
+                setNewIgnorePattern('')
+                try {
+                  await electronAPI.settingsSetSyncIgnore(next, hideIgnoredInExplorer, hiddenIgnorePatterns)
+                } catch (err) {
+                  console.error('Failed to save ignore patterns', err)
+                  setError('Failed to save ignore patterns')
+                }
+              }
+            }}
+            className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+            placeholder="Examples: ._, .bak, /logs"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const raw = newIgnorePattern.trim()
+              if (!raw) return
+              if (ignorePatterns.includes(raw)) {
+                setNewIgnorePattern('')
+                return
+              }
+              const next = [...ignorePatterns, raw]
+              setIgnorePatterns(next)
+              setNewIgnorePattern('')
+              try {
+                await electronAPI.settingsSetSyncIgnore(next, hideIgnoredInExplorer, hiddenIgnorePatterns)
+              } catch (err) {
+                console.error('Failed to save ignore patterns', err)
+                setError('Failed to save ignore patterns')
+              }
+            }}
+            className="px-3 py-1 bg-vscode-hover text-xs rounded border border-vscode-border hover:bg-vscode-border transition-colors"
+          >
+            Add
+          </button>
+        </div>
+        {ignorePatterns.length > 0 && (
+          <div className="space-y-1 mb-2 max-h-32 overflow-y-auto vscode-scrollbar">
+            {ignorePatterns.map((pattern) => {
+              const isHidden = hiddenIgnorePatterns.includes(pattern)
+              return (
+                <div
+                  key={pattern}
+                  className="flex items-center justify-between px-2 py-1 text-xs bg-vscode-bg border border-vscode-border rounded"
+                >
+                  <label className="flex items-center gap-2 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={isHidden}
+                      onChange={async (e) => {
+                        const nextHidden = e.target.checked
+                          ? [...hiddenIgnorePatterns, pattern]
+                          : hiddenIgnorePatterns.filter((p) => p !== pattern)
+                        setHiddenIgnorePatterns(nextHidden)
+                        try {
+                          await electronAPI.settingsSetSyncIgnore(ignorePatterns, hideIgnoredInExplorer, nextHidden)
+                        } catch (err) {
+                          console.error('Failed to save ignore settings', err)
+                          setError('Failed to save ignore settings')
+                        }
+                      }}
+                    />
+                    <span className="truncate">
+                      {pattern}{' '}
+                      {isHidden && <span className="text-vscode-text-muted">(hidden in explorer)</span>}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className="ml-2 text-[11px] text-vscode-text-muted hover:text-red-400"
+                    onClick={async () => {
+                      const next = ignorePatterns.filter((p) => p !== pattern)
+                      setIgnorePatterns(next)
+                      const nextHidden = hiddenIgnorePatterns.filter((p) => p !== pattern)
+                      setHiddenIgnorePatterns(nextHidden)
+                      try {
+                        await electronAPI.settingsSetSyncIgnore(next, hideIgnoredInExplorer, nextHidden)
+                      } catch (err) {
+                        console.error('Failed to save ignore patterns', err)
+                        setError('Failed to save ignore patterns')
+                      }
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <label className="inline-flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={hideIgnoredInExplorer}
+            onChange={async (e) => {
+              const nextHide = e.target.checked
+              setHideIgnoredInExplorer(nextHide)
+              try {
+                await electronAPI.settingsSetSyncIgnore(ignorePatterns, nextHide, hiddenIgnorePatterns)
+              } catch (err) {
+                console.error('Failed to save ignore settings', err)
+                setError('Failed to save ignore settings')
+              }
+            }}
+          />
+          <span>Hide ignored files in FTP Explorer</span>
+        </label>
       </section>
       <section>
         <h4 className="font-semibold mb-1">Preview in Browser</h4>

@@ -56,6 +56,8 @@ const FTPExplorer: React.FC = () => {
   const [syncing, setSyncing] = useState(false)
   const [syncCount, setSyncCount] = useState<number | null>(null)
   const [syncIgnorePatterns, setSyncIgnorePatterns] = useState<string[]>([])
+  const [hideIgnoredInExplorer, setHideIgnoredInExplorer] = useState(false)
+  const [hiddenIgnorePatterns, setHiddenIgnorePatterns] = useState<string[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FTPFile } | null>(null)
 
   const getStatusForPath = (path: string): FileStatus | undefined => {
@@ -306,8 +308,15 @@ const FTPExplorer: React.FC = () => {
     ;(async () => {
       try {
         const res = await electronAPI.settingsGetSyncIgnore()
-        if (mounted && res.success && res.patterns) {
+        if (!mounted || !res.success) return
+        if (Array.isArray(res.patterns)) {
           setSyncIgnorePatterns(res.patterns)
+        }
+        if (typeof res.hideInExplorer === 'boolean') {
+          setHideIgnoredInExplorer(res.hideInExplorer)
+        }
+        if (Array.isArray(res.hiddenPaths)) {
+          setHiddenIgnorePatterns(res.hiddenPaths)
         }
       } catch {
         // ignore
@@ -327,9 +336,49 @@ const FTPExplorer: React.FC = () => {
     }
   }, [contextMenu])
 
-  const isIgnoredForSync = (file: FTPFile) => {
-    return syncIgnorePatterns.includes(file.path)
+  const normalizeRemotePath = (p: string | undefined | null): string => {
+    if (!p) return '/'
+    let out = String(p).replace(/\\/g, '/')
+    if (!out.startsWith('/')) out = '/' + out
+    if (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1)
+    return out
   }
+
+  const matchesIgnorePattern = (file: FTPFile): boolean => {
+    const p = normalizeRemotePath(file.path)
+    const name = file.name || ''
+
+    return syncIgnorePatterns.some((patternRaw) => {
+      if (!patternRaw) return false
+      const pattern = String(patternRaw)
+      if (pattern.includes('/') || pattern.startsWith('/')) {
+        const normPattern = normalizeRemotePath(pattern)
+        return p === normPattern || p.startsWith(normPattern + '/')
+      }
+      return name.startsWith(pattern) || name.endsWith(pattern)
+    })
+  }
+
+  const isIgnoredForSync = (file: FTPFile) => matchesIgnorePattern(file)
+
+  const isIgnoredByPathOnly = (file: FTPFile) => syncIgnorePatterns.includes(file.path)
+
+  const matchesHiddenPattern = (file: FTPFile): boolean => {
+    const p = normalizeRemotePath(file.path)
+    const name = file.name || ''
+
+    return hiddenIgnorePatterns.some((patternRaw) => {
+      if (!patternRaw) return false
+      const pattern = String(patternRaw)
+      if (pattern.includes('/') || pattern.startsWith('/')) {
+        const normPattern = normalizeRemotePath(pattern)
+        return p === normPattern || p.startsWith(normPattern + '/')
+      }
+      return name.startsWith(pattern) || name.endsWith(pattern)
+    })
+  }
+
+  const isHiddenInExplorer = (file: FTPFile) => matchesHiddenPattern(file)
 
   const handleSyncClick = async () => {
     if (!isConnected || syncing) return
@@ -573,7 +622,12 @@ const FTPExplorer: React.FC = () => {
   }
 
   const renderFileTree = (files: FTPFile[]) => {
-    const sorted = [...files].sort((a, b) => {
+    const visible = files.filter((file) => {
+      if (isHiddenInExplorer(file)) return false
+      if (hideIgnoredInExplorer && isIgnoredForSync(file)) return false
+      return true
+    })
+    const sorted = [...visible].sort((a, b) => {
       const aIsDir = isDirectoryEntry(a.type)
       const bIsDir = isDirectoryEntry(b.type)
       if (aIsDir !== bIsDir) return aIsDir ? -1 : 1
@@ -873,13 +927,13 @@ const FTPExplorer: React.FC = () => {
             onClick={async (e) => {
               e.stopPropagation()
               const file = contextMenu.file
-              const currentlyIgnored = isIgnoredForSync(file)
+              const currentlyIgnored = isIgnoredByPathOnly(file)
               try {
                 const next = currentlyIgnored
                   ? syncIgnorePatterns.filter((p) => p !== file.path)
                   : [...syncIgnorePatterns, file.path]
                 setSyncIgnorePatterns(next)
-                await electronAPI.settingsSetSyncIgnore(next)
+                await electronAPI.settingsSetSyncIgnore(next, hideIgnoredInExplorer, hiddenIgnorePatterns)
               } catch (err) {
                 console.error('Failed to update sync ignore list', err)
                 setError('Failed to update sync ignore list')
@@ -888,8 +942,33 @@ const FTPExplorer: React.FC = () => {
               }
             }}
           >
-            {isIgnoredForSync(contextMenu.file) ? 'Remove from sync ignore' : 'Ignore in sync'}
+            {isIgnoredByPathOnly(contextMenu.file) ? 'Remove from sync ignore' : 'Ignore in sync'}
           </button>
+          {isIgnoredForSync(contextMenu.file) && (
+            <button
+              className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+              onClick={async (e) => {
+                e.stopPropagation()
+                const file = contextMenu.file
+                const isHidden = isHiddenInExplorer(file)
+                try {
+                  const token = file.path
+                  const nextHidden = isHidden
+                    ? hiddenIgnorePatterns.filter((p) => p !== token)
+                    : [...hiddenIgnorePatterns, token]
+                  setHiddenIgnorePatterns(nextHidden)
+                  await electronAPI.settingsSetSyncIgnore(syncIgnorePatterns, hideIgnoredInExplorer, nextHidden)
+                } catch (err) {
+                  console.error('Failed to update hidden ignore paths', err)
+                  setError('Failed to update hidden ignore paths')
+                } finally {
+                  setContextMenu(null)
+                }
+              }}
+            >
+              {isHiddenInExplorer(contextMenu.file) ? 'Show ignored file in explorer' : 'Hide this ignored file in explorer'}
+            </button>
+          )}
         </div>
       )}
     </div>

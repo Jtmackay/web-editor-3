@@ -1,221 +1,204 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { useEditorStore } from '../stores/editorStore'
 import MonacoEditor from './MonacoEditor'
 import EditorTabs from './EditorTabs'
-
-interface ElementsInspectorProps {
-  root: Document | null
-  element: Element | null
-  onClose: () => void
-}
-
-const ElementsInspector: React.FC<ElementsInspectorProps> = ({ root, element, onClose }) => {
-  if (!root || !element) {
-    return null
-  }
-
-  const buildTagLabel = (el: Element) => {
-    const tag = el.tagName.toLowerCase()
-    const id = el.id ? `#${el.id}` : ''
-    const className = (el.className && typeof el.className === 'string')
-      ? '.' + el.className.trim().split(/\s+/).filter(Boolean).join('.')
-      : ''
-    return `${tag}${id}${className}`
-  }
-
-  const ancestors: Element[] = []
-  let cursor: Element | null = element
-  while (cursor) {
-    ancestors.unshift(cursor)
-    if (!cursor.parentElement) break
-    cursor = cursor.parentElement
-  }
-
-  let computed: [string, string][] = []
-  try {
-    const win = root.defaultView
-    if (win && element) {
-      const styles = win.getComputedStyle(element)
-      computed = Array.from(styles).map((prop) => [prop, styles.getPropertyValue(prop)])
-    }
-  } catch {
-    computed = []
-  }
-
-  const [styleText, setStyleText] = useState('')
-
-  useEffect(() => {
-    if (!element) {
-      setStyleText('')
-      return
-    }
-    try {
-      const anyEl = element as any
-      const inlineStyle =
-        (typeof anyEl.getAttribute === 'function' && anyEl.getAttribute('style')) ||
-        (anyEl.style && anyEl.style.cssText) ||
-        ''
-      setStyleText(String(inlineStyle))
-    } catch {
-      setStyleText('')
-    }
-  }, [element])
-
-  const applyInlineStyles = () => {
-    if (!element) return
-    try {
-      const anyEl = element as any
-      if (typeof anyEl.setAttribute === 'function') {
-        anyEl.setAttribute('style', styleText)
-      } else if (anyEl.style) {
-        anyEl.style.cssText = styleText
-      }
-    } catch (err) {
-      console.error('Failed to apply inline styles', err)
-    }
-  }
-
-  return (
-    <div className="h-64 border-t border-vscode-border bg-[#1e1e1e] text-xs text-gray-200 flex flex-col">
-      <div className="flex items-center justify-between px-2 py-1 border-b border-vscode-border bg-[#252526]">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] uppercase tracking-wide text-gray-400">Elements</span>
-          <span className="text-[11px] text-gray-500">
-            {buildTagLabel(element)}
-          </span>
-        </div>
-        <button
-          className="px-2 py-0.5 rounded hover:bg-vscode-hover text-[11px]"
-          onClick={onClose}
-        >
-          Close
-        </button>
-      </div>
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-2/3 border-r border-vscode-border overflow-auto p-2 font-mono text-[11px] leading-snug">
-          {ancestors.map((el, idx) => {
-            const isSelected = el === element
-            const indent = idx * 8
-            const tag = el.tagName.toLowerCase()
-            const attrs: string[] = []
-            Array.from(el.attributes).forEach((attr) => {
-              if (!attr.name) return
-              attrs.push(`${attr.name}="${attr.value}"`)
-            })
-            return (
-              <div
-                key={idx}
-                className={`whitespace-nowrap ${isSelected ? 'bg-[#094771]' : ''}`}
-                style={{ paddingLeft: indent }}
-              >
-                <span className="text-[#569cd6]">&lt;{tag}</span>
-                {attrs.map((a, i) => {
-                  const [name, ...rest] = a.split('=')
-                  const value = rest.join('=')
-                  return (
-                    <span key={i}>
-                      {' '}
-                      <span className="text-[#9cdcfe]">{name}</span>
-                      ={value}
-                    </span>
-                  )
-                })}
-                <span className="text-[#569cd6]">&gt;</span>
-              </div>
-            )
-          })}
-        </div>
-        <div className="w-1/3 overflow-auto p-2 font-mono text-[11px] leading-snug">
-          <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">Styles</div>
-          {computed.slice(0, 200).map(([prop, value]) => (
-            <div key={prop} className="flex">
-              <span className="text-[#9cdcfe] min-w-[110px]">{prop}</span>
-              <span className="text-gray-300 break-all">: {value}</span>
-            </div>
-          ))}
-          {computed.length === 0 && (
-            <div className="text-gray-500 mb-2">No styles available for this element.</div>
-          )}
-          <div className="mt-2 border-t border-vscode-border pt-2">
-            <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">
-              Inline style
-            </div>
-            <textarea
-              className="w-full h-20 bg-[#1e1e1e] border border-vscode-border rounded text-[11px] p-1 text-gray-200 font-mono resize-none"
-              spellCheck={false}
-              value={styleText}
-              onChange={(e) => setStyleText(e.target.value)}
-              onBlur={applyInlineStyles}
-            />
-            <div className="mt-1 flex justify-end">
-              <button
-                className="px-2 py-0.5 rounded bg-vscode-hover hover:bg-vscode-border text-[11px]"
-                type="button"
-                onClick={applyInlineStyles}
-              >
-                Apply
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
+import InspectPanel from './InspectPanel'
 
 const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
-  const iframeRef = useRef<HTMLIFrameElement | null>(null)
-  const [inspectorRoot, setInspectorRoot] = useState<Document | null>(null)
-  const [inspectorElement, setInspectorElement] = useState<Element | null>(null)
-  const [inspectorSupported, setInspectorSupported] = useState<boolean | null>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [showInspect, setShowInspect] = useState(false)
+  const [selectedElement, setSelectedElement] = useState<any>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     const iframe = iframeRef.current
     if (!iframe) return
 
-    const attachContextMenuListener = () => {
+    let attempts = 0
+    const maxAttempts = 10
+
+    const injectInspectionScript = () => {
+      attempts++
+      
       try {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document || null
-        if (!doc) {
-          setInspectorSupported(false)
+        const iframeWin = iframe.contentWindow
+        if (!iframeWin) {
+          if (attempts < maxAttempts) {
+            setTimeout(injectInspectionScript, 500)
+          }
           return
         }
 
-        const handler = (ev: MouseEvent) => {
-          ev.preventDefault()
-          const target = ev.target as Element | null
-          if (!target) return
-          setInspectorRoot(doc)
-          setInspectorElement(target)
+        const iframeDoc = iframeWin.document
+        if (!iframeDoc || !iframeDoc.body) {
+          if (attempts < maxAttempts) {
+            setTimeout(injectInspectionScript, 500)
+          }
+          return
         }
 
-        doc.addEventListener('contextmenu', handler)
+        // Check if already installed
+        if ((iframeWin as any).__inspectionInstalled__) return
+        
+        const script = iframeDoc.createElement('script')
+        script.textContent = `
+          (function() {
+            if (window.__inspectionInstalled__) return;
+            window.__inspectionInstalled__ = true;
 
-        ;(iframe as any).__elementsInspectorHandler = handler
-        setInspectorSupported(true)
+            function buildDOMTree(element, depth = 0, maxDepth = 10) {
+              if (depth > maxDepth || !element) return null;
+              const node = {
+                tagName: element.tagName,
+                attributes: {},
+                textContent: '',
+                children: [],
+                path: getElementPath(element)
+              };
+              if (element.attributes) {
+                for (let attr of element.attributes) {
+                  node.attributes[attr.name] = attr.value;
+                }
+              }
+              for (let child of element.childNodes) {
+                if (child.nodeType === 3) {
+                  const text = child.textContent.trim();
+                  if (text) node.textContent += text;
+                }
+              }
+              for (let child of element.children) {
+                const childNode = buildDOMTree(child, depth + 1, maxDepth);
+                if (childNode) node.children.push(childNode);
+              }
+              return node;
+            }
+
+            function getElementPath(element) {
+              const path = [];
+              let current = element;
+              while (current && current !== document.body) {
+                let selector = current.tagName;
+                if (current.id) {
+                  selector += '#' + current.id;
+                } else if (current.className && typeof current.className === 'string') {
+                  selector += '.' + current.className.split(' ').join('.');
+                }
+                path.unshift(selector);
+                current = current.parentElement;
+              }
+              return path.join('>');
+            }
+
+            function getComputedStylesObj(element) {
+              const computed = window.getComputedStyle(element);
+              const styles = {};
+              const importantProps = [
+                'display', 'position', 'width', 'height', 'margin', 'padding',
+                'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+                'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+                'border', 'border-width', 'border-style', 'border-color',
+                'background', 'background-color', 'color', 'font-size', 'font-family',
+                'flex', 'grid', 'top', 'left', 'right', 'bottom', 'z-index'
+              ];
+              for (let prop of importantProps) {
+                const value = computed.getPropertyValue(prop);
+                if (value) styles[prop] = value;
+              }
+              return styles;
+            }
+
+            function getInlineStyles(element) {
+              const styles = {};
+              if (element.style) {
+                for (let i = 0; i < element.style.length; i++) {
+                  const prop = element.style[i];
+                  styles[prop] = element.style.getPropertyValue(prop);
+                }
+              }
+              return styles;
+            }
+
+            function getElementInfo(element) {
+              return {
+                tagName: element.tagName,
+                id: element.id || '',
+                className: element.className || '',
+                path: getElementPath(element),
+                domTree: buildDOMTree(document.body),
+                styles: {
+                  computed: getComputedStylesObj(element),
+                  inline: getInlineStyles(element)
+                }
+              };
+            }
+
+            document.addEventListener('contextmenu', function(e) {
+              e.preventDefault();
+              const elementInfo = getElementInfo(e.target);
+              window.parent.postMessage({
+                type: 'inspectElement',
+                data: elementInfo,
+                mouseX: e.clientX,
+                mouseY: e.clientY
+              }, '*');
+            }, true);
+          })();
+        `
+        
+        iframeDoc.head.appendChild(script)
+        console.log('Inspection script injected successfully')
+        
       } catch (err) {
-        console.error('Failed to attach inspector listener (likely cross-origin)', err)
-        setInspectorSupported(false)
+        console.error('Failed to inject inspection script:', err)
+        if (attempts < maxAttempts) {
+          setTimeout(injectInspectionScript, 500)
+        }
       }
     }
 
-    // Try once immediately (in case content is already loaded) and again on load.
-    attachContextMenuListener()
-    iframe.addEventListener('load', attachContextMenuListener)
+    iframe.addEventListener('load', injectInspectionScript)
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.type === 'inspectElement') {
+        setSelectedElement(event.data.data)
+        setShowInspect(true)
+        setContextMenu({ x: event.data.mouseX, y: event.data.mouseY })
+      }
+    }
+
+    const handleClick = () => {
+      setContextMenu(null)
+    }
+
+    window.addEventListener('message', handleMessage)
+    window.addEventListener('click', handleClick)
 
     return () => {
-      try {
-        const handler = (iframe as any).__elementsInspectorHandler as ((ev: MouseEvent) => void) | undefined
-        const doc = iframe.contentDocument || iframe.contentWindow?.document || null
-        if (doc && handler) {
-          doc.removeEventListener('contextmenu', handler)
-        }
-      } catch {
-        // ignore cleanup errors
-      }
-      iframe.removeEventListener('load', attachContextMenuListener)
+      iframe.removeEventListener('load', injectInspectionScript)
+      window.removeEventListener('message', handleMessage)
+      window.removeEventListener('click', handleClick)
     }
-  }, [url])
+  }, [])
+
+  const handleSelectElement = (path: string) => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    
+    try {
+      const iframeWin = iframe.contentWindow
+      if (!iframeWin) return
+      
+      const iframeDoc = iframeWin.document
+      if (!iframeDoc) return
+      
+      const element = iframeDoc.querySelector(path)
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    } catch (err) {
+      console.error('Failed to select element:', err)
+    }
+  }
 
   if (!url) {
     return (
@@ -229,30 +212,52 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
   }
 
   return (
-    <div className="h-full w-full flex flex-col">
-      <div className="flex-1 relative">
+    <div className="h-full w-full flex">
+      <div className={showInspect ? 'flex-1 relative' : 'w-full h-full relative'}>
         <iframe
           ref={iframeRef}
           src={url}
           className="w-full h-full border-0 bg-white"
-          // Keep sandbox reasonably permissive for typical sites while still isolating content.
-          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
         />
+        
+        {/* Custom context menu */}
+        {contextMenu && (
+          <div
+            className="fixed z-50 bg-vscode-sidebar border border-vscode-border rounded shadow-lg text-sm min-w-[180px]"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="block w-full text-left px-3 py-2 hover:bg-vscode-hover"
+              onClick={() => {
+                setContextMenu(null)
+                if (!showInspect) setShowInspect(true)
+              }}
+            >
+              Inspect
+            </button>
+            {showInspect && (
+              <button
+                className="block w-full text-left px-3 py-2 hover:bg-vscode-hover border-t border-vscode-border"
+                onClick={() => {
+                  setShowInspect(false)
+                  setContextMenu(null)
+                }}
+              >
+                Hide DevTools
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      {inspectorSupported === false && (
-        <div className="h-8 flex items-center px-3 border-t border-vscode-border bg-[#252526] text-[11px] text-gray-400">
-          Element inspector is unavailable for this page (cross-origin). Use “View in browser” to inspect with DevTools.
+      {showInspect && (
+        <div className="w-96 h-full">
+          <InspectPanel
+            selectedElement={selectedElement}
+            onClose={() => setShowInspect(false)}
+            onSelectElement={handleSelectElement}
+          />
         </div>
-      )}
-      {inspectorRoot && inspectorElement && (
-        <ElementsInspector
-          root={inspectorRoot}
-          element={inspectorElement}
-          onClose={() => {
-            setInspectorRoot(null)
-            setInspectorElement(null)
-          }}
-        />
       )}
     </div>
   )

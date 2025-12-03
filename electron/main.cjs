@@ -10,6 +10,11 @@ const { SettingsService } = require('./services/settingsService.cjs')
 // Disable it globally so the app can start reliably.
 app.disableHardwareAcceleration()
 
+// Disable web security to allow cross-origin iframe access for inspect feature
+app.commandLine.appendSwitch('disable-web-security')
+app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors')
+app.commandLine.appendSwitch('disable-site-isolation-trials')
+
 let mainWindow
 let ftpService
 let databaseService
@@ -268,15 +273,33 @@ function setupIPC() {
   ipcMain.handle('settings-get-sync-ignore', async () => {
     try {
       const patterns = settingsService.getSyncIgnorePatterns()
-      return { success: true, patterns }
+      const hideInExplorer = settingsService.getSyncHideIgnoredInExplorer
+        ? settingsService.getSyncHideIgnoredInExplorer()
+        : false
+      const hiddenPaths = settingsService.getSyncHiddenPaths
+        ? settingsService.getSyncHiddenPaths()
+        : []
+      return { success: true, patterns, hideInExplorer, hiddenPaths }
     } catch (error) {
       return { success: false, error: error.message }
     }
   })
-  ipcMain.handle('settings-set-sync-ignore', async (event, patterns) => {
+  ipcMain.handle('settings-set-sync-ignore', async (event, patterns, hideInExplorer, hiddenPaths) => {
     try {
-      const saved = settingsService.setSyncIgnorePatterns(patterns)
-      return { success: true, patterns: saved }
+      const savedPatterns = settingsService.setSyncIgnorePatterns(patterns)
+      let savedHide = settingsService.getSyncHideIgnoredInExplorer
+        ? settingsService.getSyncHideIgnoredInExplorer()
+        : false
+      if (typeof hideInExplorer === 'boolean' && settingsService.setSyncHideIgnoredInExplorer) {
+        savedHide = settingsService.setSyncHideIgnoredInExplorer(hideInExplorer)
+      }
+      let savedHiddenPaths = settingsService.getSyncHiddenPaths
+        ? settingsService.getSyncHiddenPaths()
+        : []
+      if (Array.isArray(hiddenPaths) && settingsService.setSyncHiddenPaths) {
+        savedHiddenPaths = settingsService.setSyncHiddenPaths(hiddenPaths)
+      }
+      return { success: true, patterns: savedPatterns, hideInExplorer: savedHide, hiddenPaths: savedHiddenPaths }
     } catch (error) {
       return { success: false, error: error.message }
     }

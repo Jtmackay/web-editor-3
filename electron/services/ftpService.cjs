@@ -193,7 +193,13 @@ class FTPService {
       return out
     }
 
-    const ignore = (Array.isArray(ignorePatterns) ? ignorePatterns : []).map(normalizeRemote)
+    const rawIgnore = Array.isArray(ignorePatterns) ? ignorePatterns : []
+    const pathPatterns = rawIgnore
+      .filter(p => typeof p === 'string' && (p.includes('/') || String(p).startsWith('/')))
+      .map(normalizeRemote)
+    const namePatterns = rawIgnore
+      .filter(p => typeof p === 'string' && !String(p).includes('/') && !String(p).startsWith('/'))
+      .map(p => String(p))
 
     let filesSynced = 0
     const reportProgress = () => {
@@ -206,9 +212,23 @@ class FTPService {
       }
     }
 
-    const isIgnored = (remotePath) => {
+    const isIgnored = (remotePath, name) => {
       const p = normalizeRemote(remotePath)
-      return ignore.some(pattern => p === pattern || p.startsWith(pattern + '/'))
+      const fileName = String(name || '').trim()
+
+      // Path-based ignore: exact match or directory prefix.
+      if (pathPatterns.some(pattern => p === pattern || p.startsWith(pattern + '/'))) {
+        return true
+      }
+
+      // Name-based ignore: filename starts or ends with the token.
+      if (fileName) {
+        if (namePatterns.some(token => fileName.startsWith(token) || fileName.endsWith(token))) {
+          return true
+        }
+      }
+
+      return false
     }
 
     const ensureLocalDir = async (dir) => {
@@ -217,17 +237,14 @@ class FTPService {
 
     const walk = async (remotePath, localDir) => {
       const normalizedPath = normalizeRemote(remotePath)
-      if (isIgnored(normalizedPath)) return
+      if (isIgnored(normalizedPath, nodePath.basename(normalizedPath))) return
 
       const entries = await this.listFiles(normalizedPath)
       await ensureLocalDir(localDir)
 
       for (const entry of entries) {
-        if (entry.name && entry.name.startsWith('._')) {
-          continue
-        }
         const remoteChild = normalizeRemote(entry.path)
-        if (isIgnored(remoteChild)) continue
+        if (isIgnored(remoteChild, entry.name)) continue
         const localChild = nodePath.join(localDir, entry.name)
         if (entry.type === 'directory') {
           await walk(remoteChild, localChild)

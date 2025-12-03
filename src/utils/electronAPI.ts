@@ -31,8 +31,8 @@ declare global {
       settingsAddFTPConnection: (conn: { name: string; host: string; port: number; username: string; password: string; defaultPath: string; appendedUrl?: string }) => Promise<{ success: boolean; connection?: any; error?: string }>
       settingsRemoveFTPConnection: (id: number | string) => Promise<{ success: boolean; removed?: any; error?: string }>
       settingsGetFTPPassword: (id: number | string) => Promise<{ success: boolean; password?: string; error?: string }>
-      settingsGetSyncIgnore: () => Promise<{ success: boolean; patterns?: string[]; error?: string }>
-      settingsSetSyncIgnore: (patterns: string[]) => Promise<{ success: boolean; patterns?: string[]; error?: string }>
+      settingsGetSyncIgnore: () => Promise<{ success: boolean; patterns?: string[]; hideInExplorer?: boolean; hiddenPaths?: string[]; error?: string }>
+      settingsSetSyncIgnore: (patterns: string[], hideInExplorer?: boolean, hiddenPaths?: string[]) => Promise<{ success: boolean; patterns?: string[]; hideInExplorer?: boolean; hiddenPaths?: string[]; error?: string }>
       settingsGetSyncFolder: () => Promise<{ success: boolean; path?: string; error?: string }>
       settingsSetSyncFolder: (path: string) => Promise<{ success: boolean; error?: string }>
       settingsChooseSyncFolder?: () => Promise<{ success: boolean; path?: string; error?: string }>
@@ -64,6 +64,9 @@ declare global {
       // Menu event listeners
       onMenuEvent: (callback: (event: any, action: string) => void) => () => void
       onSyncProgress?: (callback: (event: any, payload: { count: number }) => void) => () => void
+
+      // DevTools helpers
+      inspectElementAt?: (x: number, y: number) => Promise<{ success: boolean; error?: string }>
     }
   }
 }
@@ -99,14 +102,14 @@ export const electronAPI = {
   settingsAddFTPConnection: (conn: { name: string; host: string; port: number; username: string; password: string; defaultPath: string; appendedUrl?: string }) => window.electronAPI?.settingsAddFTPConnection(conn) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsRemoveFTPConnection: (id: number | string) => window.electronAPI?.settingsRemoveFTPConnection(id) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsGetFTPPassword: (id: number | string) => window.electronAPI?.settingsGetFTPPassword(id) || Promise.resolve({ success: false, error: 'Electron API not available' }),
-  settingsGetSyncIgnore: (): Promise<{ success: boolean; patterns?: string[]; error?: string }> =>
+  settingsGetSyncIgnore: (): Promise<{ success: boolean; patterns?: string[]; hideInExplorer?: boolean; hiddenPaths?: string[]; error?: string }> =>
     (window.electronAPI && typeof window.electronAPI.settingsGetSyncIgnore === 'function')
       ? window.electronAPI.settingsGetSyncIgnore()
-      : Promise.resolve<{ success: boolean; patterns?: string[]; error?: string }>({ success: true, patterns: [] }),
-  settingsSetSyncIgnore: (patterns: string[]): Promise<{ success: boolean; patterns?: string[]; error?: string }> =>
+      : Promise.resolve<{ success: boolean; patterns?: string[]; hideInExplorer?: boolean; hiddenPaths?: string[]; error?: string }>({ success: true, patterns: [], hideInExplorer: false, hiddenPaths: [] }),
+  settingsSetSyncIgnore: (patterns: string[], hideInExplorer?: boolean, hiddenPaths?: string[]): Promise<{ success: boolean; patterns?: string[]; hideInExplorer?: boolean; hiddenPaths?: string[]; error?: string }> =>
     (window.electronAPI && typeof window.electronAPI.settingsSetSyncIgnore === 'function')
-      ? window.electronAPI.settingsSetSyncIgnore(patterns)
-      : Promise.resolve<{ success: boolean; patterns?: string[]; error?: string }>({
+      ? window.electronAPI.settingsSetSyncIgnore(patterns, hideInExplorer, hiddenPaths)
+      : Promise.resolve<{ success: boolean; patterns?: string[]; hideInExplorer?: boolean; hiddenPaths?: string[]; error?: string }>({
           success: false,
           error: 'Electron API not available'
         }),
@@ -156,6 +159,8 @@ export const electronAPI = {
     Promise.resolve({ success: false, error: 'Electron API not available' }),
   projectSearch: (payload: { query: string; useRegex: boolean; caseSensitive: boolean }) =>
     window.electronAPI?.projectSearch(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  inspectElementAt: (x: number, y: number) =>
+    window.electronAPI?.inspectElementAt?.(x, y) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   
   onMenuEvent: (callback: (event: any, action: string) => void) => {
     if (window.electronAPI?.onMenuEvent) {

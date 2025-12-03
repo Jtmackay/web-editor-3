@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsRemoveFTPConnection: (id) => ipcRenderer.invoke('settings-remove-ftp-connection', id),
   settingsGetFTPPassword: (id) => ipcRenderer.invoke('settings-get-ftp-password', id),
   settingsGetSyncIgnore: () => ipcRenderer.invoke('settings-get-sync-ignore'),
-  settingsSetSyncIgnore: (patterns) => ipcRenderer.invoke('settings-set-sync-ignore', patterns),
+  settingsSetSyncIgnore: (patterns, hideInExplorer, hiddenPaths) => ipcRenderer.invoke('settings-set-sync-ignore', patterns, hideInExplorer, hiddenPaths),
   settingsGetSyncFolder: () => ipcRenderer.invoke('settings-get-sync-folder'),
   settingsSetSyncFolder: (path) => ipcRenderer.invoke('settings-set-sync-folder', path),
   settingsChooseSyncFolder: () => ipcRenderer.invoke('settings-choose-sync-folder'),

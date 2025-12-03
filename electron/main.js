@@ -19,10 +19,41 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       enableRemoteModule: false,
+      // Disable webSecurity so the renderer can reach into cross-origin
+      // preview iframes for the custom inspector. This is acceptable here
+      // because the app is a local desktop tool, not a browser.
+      webSecurity: false,
       preload: path.join(__dirname, 'preload.js')
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false
+  })
+
+  // Provide a Chrome-like "Inspect Element" option on right-click anywhere,
+  // including inside the preview iframe. This opens DevTools docked to the
+  // right and focuses the element that was clicked, similar to Chrome.
+  mainWindow.webContents.on('context-menu', (event, params) => {
+    if (!mainWindow) return
+
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Inspect Element',
+        click: () => {
+          try {
+            mainWindow.webContents.openDevTools({ mode: 'right' })
+            mainWindow.webContents.inspectElement(params.x, params.y)
+            if (mainWindow.webContents.isDevToolsOpened() && mainWindow.webContents.devToolsWebContents) {
+              mainWindow.webContents.devToolsWebContents.focus()
+            }
+          } catch (e) {
+            // If anything goes wrong, fall back to regular DevTools toggle.
+            mainWindow.webContents.openDevTools({ mode: 'right' })
+          }
+        }
+      }
+    ])
+
+    contextMenu.popup({ window: mainWindow })
   })
 
   // Load the app
@@ -287,6 +318,26 @@ function setupIPC() {
       const user = await databaseService.getOrCreateDefaultUser()
       return { success: true, user }
     } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // DevTools helpers
+  ipcMain.handle('inspect-element-at', async (event, payload) => {
+    if (!mainWindow) {
+      return { success: false, error: 'Main window not available' }
+    }
+    try {
+      const x = Math.round(payload?.x ?? 0)
+      const y = Math.round(payload?.y ?? 0)
+      mainWindow.webContents.openDevTools({ mode: 'right' })
+      mainWindow.webContents.inspectElement(x, y)
+      if (mainWindow.webContents.isDevToolsOpened() && mainWindow.webContents.devToolsWebContents) {
+        mainWindow.webContents.devToolsWebContents.focus()
+      }
+      return { success: true }
+    } catch (error) {
+      mainWindow.webContents.openDevTools({ mode: 'right' })
       return { success: false, error: error.message }
     }
   })

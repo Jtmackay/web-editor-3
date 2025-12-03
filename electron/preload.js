@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbRemoveActiveFile: (userId, filePath) => ipcRenderer.invoke('db-remove-active-file', userId, filePath),
   dbGetOrCreateDefaultUser: () => ipcRenderer.invoke('db-get-or-create-default-user'),
 
+  // DevTools helpers
+  inspectElementAt: (x, y) => ipcRenderer.invoke('inspect-element-at', { x, y }),
+
   // Menu event listeners
   onMenuEvent: (callback) => {
     const events = [
