@@ -9,6 +9,7 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
   const [showInspect, setShowInspect] = useState(false)
   const [selectedElement, setSelectedElement] = useState<any>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [inspectPanelWidth, setInspectPanelWidth] = useState(450)
 
   useEffect(() => {
     const iframe = iframeRef.current
@@ -160,8 +161,10 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
 
     const handleMessage = (event: MessageEvent) => {
       if (event.data.type === 'inspectElement') {
+        // Store which element was right-clicked and where the context menu should appear.
+        // Only open the Inspect panel when the user explicitly clicks "Inspect"
+        // in the custom context menu (to better match Chrome's behavior).
         setSelectedElement(event.data.data)
-        setShowInspect(true)
         setContextMenu({ x: event.data.mouseX, y: event.data.mouseY })
       }
     }
@@ -213,11 +216,12 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
 
   return (
     <div className="h-full w-full flex">
-      <div className={showInspect ? 'flex-1 relative' : 'w-full h-full relative'}>
+      <div className="flex-1 relative min-w-[200px]">
         <iframe
           ref={iframeRef}
           src={url}
           className="w-full h-full border-0 bg-white"
+          data-role="browser-preview-iframe"
         />
         
         {/* Custom context menu */}
@@ -231,7 +235,7 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
               className="block w-full text-left px-3 py-2 hover:bg-vscode-hover"
               onClick={() => {
                 setContextMenu(null)
-                if (!showInspect) setShowInspect(true)
+                setShowInspect(true)
               }}
             >
               Inspect
@@ -251,13 +255,13 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
         )}
       </div>
       {showInspect && (
-        <div className="w-96 h-full">
-          <InspectPanel
-            selectedElement={selectedElement}
-            onClose={() => setShowInspect(false)}
-            onSelectElement={handleSelectElement}
-          />
-        </div>
+        <InspectPanel
+          selectedElement={selectedElement}
+          onClose={() => setShowInspect(false)}
+          onSelectElement={handleSelectElement}
+          width={inspectPanelWidth}
+          onWidthChange={setInspectPanelWidth}
+        />
       )}
     </div>
   )
