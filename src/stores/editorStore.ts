@@ -8,6 +8,14 @@ export interface EditorFile {
   language: string
   isDirty: boolean
   lastModified: Date
+  /**
+   * Optional kind of tab. Undefined is treated as a regular code editor tab.
+   */
+  kind?: 'code' | 'preview'
+  /**
+   * For preview tabs, the URL to display inside the in-app browser tab.
+   */
+  previewUrl?: string
 }
 
 interface EditorState {

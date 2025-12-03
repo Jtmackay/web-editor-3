@@ -89,6 +89,39 @@ const FTPExplorer: React.FC = () => {
     return url
   }
 
+  const openPreviewInTab = async (file: FTPFile) => {
+    try {
+      const url = await buildPreviewUrl(file)
+      if (!url) return
+
+      const editor = useEditorStore.getState()
+      const previewId = `preview:${url}`
+      const existing = editor.openFiles.find((f) => f.id === previewId)
+      const now = new Date()
+
+      if (existing) {
+        editor.setActiveFile(previewId)
+        return
+      }
+
+      editor.openFile({
+        id: previewId,
+        path: String(file.path || ''),
+        name: `${file.name} (Preview)`,
+        content: '',
+        language: 'plaintext',
+        isDirty: false,
+        lastModified: now,
+        kind: 'preview',
+        previewUrl: url
+      })
+      editor.setActiveFile(previewId)
+    } catch (err) {
+      console.error('Failed to open preview in tab', err)
+      setError('Failed to open preview in tab')
+    }
+  }
+
   function runQueued<T>(fn: () => Promise<T>): Promise<T> {
     const next = queueRef.current.then(fn)
     queueRef.current = next.then(() => undefined).catch(() => undefined)
@@ -678,25 +711,37 @@ const FTPExplorer: React.FC = () => {
           }}
         >
           {!isDirectoryEntry(contextMenu.file.type) && (
-            <button
-              className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
-              onClick={async (e) => {
-                e.stopPropagation()
-                try {
-                  const url = await buildPreviewUrl(contextMenu.file)
-                  if (url) {
-                    await electronAPI.openExternalUrl(url)
+            <>
+              <button
+                className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  try {
+                    const url = await buildPreviewUrl(contextMenu.file)
+                    if (url) {
+                      await electronAPI.openExternalUrl(url)
+                    }
+                  } catch (err) {
+                    console.error('Failed to open preview in browser', err)
+                    setError('Failed to open preview in browser')
+                  } finally {
+                    setContextMenu(null)
                   }
-                } catch (err) {
-                  console.error('Failed to open preview in browser', err)
-                  setError('Failed to open preview in browser')
-                } finally {
+                }}
+              >
+                View in browser
+              </button>
+              <button
+                className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  await openPreviewInTab(contextMenu.file)
                   setContextMenu(null)
-                }
-              }}
-            >
-              View in browser
-            </button>
+                }}
+              >
+                View in tab
+              </button>
+            </>
           )}
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
