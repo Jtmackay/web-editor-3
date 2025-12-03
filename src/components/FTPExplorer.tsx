@@ -43,6 +43,52 @@ const FTPExplorer: React.FC = () => {
   const [syncIgnorePatterns, setSyncIgnorePatterns] = useState<string[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FTPFile } | null>(null)
 
+  const buildPreviewUrl = async (file: FTPFile): Promise<string | null> => {
+    const rawPath = String(file.path || '')
+    const normalizedPath = rawPath.replace(/\\/g, '/')
+
+    const [baseRes, startAfterRes] = await Promise.all([
+      electronAPI.settingsGetPreviewBaseUrl(),
+      electronAPI.settingsGetPreviewStartAfter()
+    ])
+
+    if (!baseRes.success) {
+      setError(baseRes.error || 'Failed to load preview base URL from settings')
+      return null
+    }
+
+    const baseRaw = (baseRes.baseUrl || '').trim()
+    if (!baseRaw) {
+      setError('Base URL is not configured. Set it in the Settings tab.')
+      return null
+    }
+
+    const hasProtocol = /^https?:\/\//i.test(baseRaw)
+    const base = (hasProtocol ? baseRaw : `https://${baseRaw}`).replace(/\/+$/, '')
+
+    let urlPath = normalizedPath
+    const startAfterRaw = (startAfterRes.success && startAfterRes.startAfter) ? startAfterRes.startAfter : ''
+    const startAfter = startAfterRaw.replace(/\\/g, '/').replace(/^\/+/, '')
+
+    if (startAfter) {
+      const relative = normalizedPath.replace(/^\/+/, '')
+      const lowerRelative = relative.toLowerCase()
+      const lowerStart = startAfter.toLowerCase()
+      if (lowerRelative.startsWith(lowerStart + '/') || lowerRelative === lowerStart) {
+        let trimmed = relative.slice(startAfter.length)
+        trimmed = trimmed.replace(/^\/+/, '')
+        urlPath = '/' + trimmed
+      } else {
+        urlPath = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath
+      }
+    } else {
+      urlPath = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath
+    }
+
+    const url = encodeURI(`${base}${urlPath}`)
+    return url
+  }
+
   function runQueued<T>(fn: () => Promise<T>): Promise<T> {
     const next = queueRef.current.then(fn)
     queueRef.current = next.then(() => undefined).catch(() => undefined)
@@ -631,6 +677,27 @@ const FTPExplorer: React.FC = () => {
             e.stopPropagation()
           }}
         >
+          {!isDirectoryEntry(contextMenu.file.type) && (
+            <button
+              className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+              onClick={async (e) => {
+                e.stopPropagation()
+                try {
+                  const url = await buildPreviewUrl(contextMenu.file)
+                  if (url) {
+                    await electronAPI.openExternalUrl(url)
+                  }
+                } catch (err) {
+                  console.error('Failed to open preview in browser', err)
+                  setError('Failed to open preview in browser')
+                } finally {
+                  setContextMenu(null)
+                }
+              }}
+            >
+              View in browser
+            </button>
+          )}
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
             onClick={async (e) => {

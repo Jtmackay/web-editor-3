@@ -282,6 +282,38 @@ function setupIPC() {
       return { success: false, error: error.message }
     }
   })
+  ipcMain.handle('settings-get-preview-base-url', async () => {
+    try {
+      const baseUrl = settingsService.getPreviewBaseUrl()
+      return { success: true, baseUrl }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-set-preview-base-url', async (_event, baseUrl) => {
+    try {
+      const saved = settingsService.setPreviewBaseUrl(baseUrl)
+      return { success: true, baseUrl: saved }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-get-preview-start-after', async () => {
+    try {
+      const startAfter = settingsService.getPreviewStartAfter()
+      return { success: true, startAfter }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-set-preview-start-after', async (_event, startAfter) => {
+    try {
+      const saved = settingsService.setPreviewStartAfter(startAfter)
+      return { success: true, startAfter: saved }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
   ipcMain.handle('settings-set-sync-folder', async (event, folderPath) => {
     try {
       const fs = require('fs').promises

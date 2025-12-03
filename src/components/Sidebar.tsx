@@ -129,6 +129,8 @@ const Sidebar: React.FC = () => {
 
 const SettingsPanel: React.FC = () => {
   const [syncFolder, setSyncFolder] = useState('')
+  const [previewBaseUrl, setPreviewBaseUrl] = useState('')
+  const [previewStartAfter, setPreviewStartAfter] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -140,13 +142,23 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const res = await electronAPI.settingsGetSyncFolder()
-        if (mounted && res.success && res.path) {
-          setSyncFolder(res.path)
+        const [syncRes, baseUrlRes, startAfterRes] = await Promise.all([
+          electronAPI.settingsGetSyncFolder(),
+          electronAPI.settingsGetPreviewBaseUrl(),
+          electronAPI.settingsGetPreviewStartAfter()
+        ])
+        if (mounted && syncRes.success && typeof syncRes.path === 'string') {
+          setSyncFolder(syncRes.path)
+        }
+        if (mounted && baseUrlRes.success && typeof baseUrlRes.baseUrl === 'string') {
+          setPreviewBaseUrl(baseUrlRes.baseUrl)
+        }
+        if (mounted && startAfterRes.success && typeof startAfterRes.startAfter === 'string') {
+          setPreviewStartAfter(startAfterRes.startAfter)
         }
       } catch (err) {
         console.error('Failed to load sync folder', err)
-        if (mounted) setError('Failed to load sync folder')
+        if (mounted) setError('Failed to load settings')
       } finally {
         if (mounted) setLoading(false)
       }
@@ -192,15 +204,23 @@ const SettingsPanel: React.FC = () => {
     }
     setSaving(true)
     try {
-      const res = await electronAPI.settingsSetSyncFolder(syncFolder.trim())
-      if (!res.success) {
-        setError(res.error || 'Failed to save sync folder')
+      const [syncRes, baseUrlRes, startAfterRes] = await Promise.all([
+        electronAPI.settingsSetSyncFolder(syncFolder.trim()),
+        electronAPI.settingsSetPreviewBaseUrl(previewBaseUrl.trim()),
+        electronAPI.settingsSetPreviewStartAfter(previewStartAfter.trim())
+      ])
+      if (!syncRes.success) {
+        setError(syncRes.error || 'Failed to save sync folder')
+      } else if (!baseUrlRes.success) {
+        setError(baseUrlRes.error || 'Failed to save preview base URL')
+      } else if (!startAfterRes.success) {
+        setError(startAfterRes.error || 'Failed to save preview start-after path')
       } else {
-        setStatus('Sync folder saved')
+        setStatus('Settings saved')
       }
     } catch (err) {
-      console.error('Failed to save sync folder', err)
-      setError('Failed to save sync folder')
+      console.error('Failed to save settings', err)
+      setError('Failed to save settings')
     } finally {
       setSaving(false)
     }
@@ -254,6 +274,42 @@ const SettingsPanel: React.FC = () => {
             {status}
           </div>
         )}
+      </section>
+      <section>
+        <h4 className="font-semibold mb-1">Preview in Browser</h4>
+        <p className="text-vscode-text-muted mb-2">
+          Configure how file paths on the server map to your website URLs for the “View in browser” option.
+        </p>
+        <div className="space-y-2">
+          <div>
+            <label className="block text-xs font-medium mb-1">Base URL</label>
+            <input
+              type="text"
+              value={previewBaseUrl}
+              onChange={(e) => setPreviewBaseUrl(e.target.value)}
+              className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+              placeholder="www.novak-adapt.com"
+            />
+            <div className="mt-1 text-[11px] text-vscode-text-muted">
+              Protocol is optional. For example, enter <code>www.novak-adapt.com</code> or <code>https://www.novak-adapt.com</code>.
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Start URL after</label>
+            <input
+              type="text"
+              value={previewStartAfter}
+              onChange={(e) => setPreviewStartAfter(e.target.value)}
+              className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+              placeholder="www/www"
+            />
+            <div className="mt-1 text-[11px] text-vscode-text-muted">
+              Remote paths before this segment are removed when building the URL.
+              For example, a file at <code>www/www/catalog/transmissions/ax15.html</code> with{' '}
+              <code>www/www</code> here becomes <code>/catalog/transmissions/ax15.html</code>.
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   )

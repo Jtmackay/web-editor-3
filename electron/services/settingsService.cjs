@@ -40,6 +40,22 @@ class SettingsService {
     this.store.set('syncFolder', normalized)
     return normalized
   }
+  getPreviewBaseUrl() {
+    return this.store.get('previewBaseUrl', '')
+  }
+  setPreviewBaseUrl(baseUrl) {
+    const normalized = baseUrl ? String(baseUrl).trim() : ''
+    this.store.set('previewBaseUrl', normalized)
+    return normalized
+  }
+  getPreviewStartAfter() {
+    return this.store.get('previewStartAfter', '')
+  }
+  setPreviewStartAfter(startAfter) {
+    const normalized = startAfter ? String(startAfter).trim() : ''
+    this.store.set('previewStartAfter', normalized)
+    return normalized
+  }
 }
 
 module.exports = { SettingsService }

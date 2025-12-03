@@ -36,6 +36,10 @@ declare global {
       settingsGetSyncFolder: () => Promise<{ success: boolean; path?: string; error?: string }>
       settingsSetSyncFolder: (path: string) => Promise<{ success: boolean; error?: string }>
       settingsChooseSyncFolder?: () => Promise<{ success: boolean; path?: string; error?: string }>
+      settingsGetPreviewBaseUrl: () => Promise<{ success: boolean; baseUrl?: string; error?: string }>
+      settingsSetPreviewBaseUrl: (baseUrl: string) => Promise<{ success: boolean; baseUrl?: string; error?: string }>
+      settingsGetPreviewStartAfter: () => Promise<{ success: boolean; startAfter?: string; error?: string }>
+      settingsSetPreviewStartAfter: (startAfter: string) => Promise<{ success: boolean; startAfter?: string; error?: string }>
       openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
 
       localSaveFile: (remotePath: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>
@@ -123,6 +127,28 @@ export const electronAPI = {
       : Promise.resolve<{ success: boolean; path?: string; error?: string }>({
           success: false,
           error: 'Folder picker not available'
+        }),
+  settingsGetPreviewBaseUrl: (): Promise<{ success: boolean; baseUrl?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsGetPreviewBaseUrl === 'function')
+      ? window.electronAPI.settingsGetPreviewBaseUrl()
+      : Promise.resolve<{ success: boolean; baseUrl?: string; error?: string }>({ success: true, baseUrl: '' }),
+  settingsSetPreviewBaseUrl: (baseUrl: string): Promise<{ success: boolean; baseUrl?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsSetPreviewBaseUrl === 'function')
+      ? window.electronAPI.settingsSetPreviewBaseUrl(baseUrl)
+      : Promise.resolve<{ success: boolean; baseUrl?: string; error?: string }>({
+          success: false,
+          error: 'Electron API not available'
+        }),
+  settingsGetPreviewStartAfter: (): Promise<{ success: boolean; startAfter?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsGetPreviewStartAfter === 'function')
+      ? window.electronAPI.settingsGetPreviewStartAfter()
+      : Promise.resolve<{ success: boolean; startAfter?: string; error?: string }>({ success: true, startAfter: '' }),
+  settingsSetPreviewStartAfter: (startAfter: string): Promise<{ success: boolean; startAfter?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsSetPreviewStartAfter === 'function')
+      ? window.electronAPI.settingsSetPreviewStartAfter(startAfter)
+      : Promise.resolve<{ success: boolean; startAfter?: string; error?: string }>({
+          success: false,
+          error: 'Electron API not available'
         }),
   openExternalUrl: (url: string) => window.electronAPI?.openExternalUrl(url) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   localSaveFile: (remotePath: string, content: string) =>

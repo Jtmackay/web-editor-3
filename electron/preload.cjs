@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsGetSyncFolder: () => ipcRenderer.invoke('settings-get-sync-folder'),
   settingsSetSyncFolder: (path) => ipcRenderer.invoke('settings-set-sync-folder', path),
   settingsChooseSyncFolder: () => ipcRenderer.invoke('settings-choose-sync-folder'),
+  settingsGetPreviewBaseUrl: () => ipcRenderer.invoke('settings-get-preview-base-url'),
+  settingsSetPreviewBaseUrl: (baseUrl) => ipcRenderer.invoke('settings-set-preview-base-url', baseUrl),
+  settingsGetPreviewStartAfter: () => ipcRenderer.invoke('settings-get-preview-start-after'),
+  settingsSetPreviewStartAfter: (startAfter) => ipcRenderer.invoke('settings-set-preview-start-after', startAfter),
 
   projectSearch: (payload) => ipcRenderer.invoke('project-search', payload),
 
