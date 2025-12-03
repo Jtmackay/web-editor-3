@@ -22,12 +22,19 @@ export interface FTPFile {
   editingUsers?: string[]
 }
 
+export type FileStatus = 'finished' | 'not_finished' | 'needs_work'
+
 interface FTPState {
   connections: FTPConnection[]
   activeConnection: string | null
   isConnected: boolean
   currentPath: string
   files: FTPFile[]
+  /**
+   * Per-file status flags keyed by full FTP path.
+   * Used for visual cues like "Finished", "Not finished", "Needs work".
+   */
+  fileStatuses: Record<string, FileStatus | undefined>
   isLoading: boolean
   error: string | null
 }
@@ -38,6 +45,7 @@ interface FTPActions {
   setConnectionStatus: (connected: boolean) => void
   setCurrentPath: (path: string) => void
   setFiles: (files: FTPFile[]) => void
+  setFileStatus: (filePath: string, status: FileStatus | undefined) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   addConnection: (connection: FTPConnection) => void
@@ -52,6 +60,7 @@ export const useFTPStore = create<FTPState & FTPActions>((set, get) => ({
   isConnected: false,
   currentPath: '/',
   files: [],
+  fileStatuses: {},
   isLoading: false,
   error: null,
 
@@ -82,6 +91,15 @@ export const useFTPStore = create<FTPState & FTPActions>((set, get) => ({
 
   setError: (error) => {
     set({ error })
+  },
+
+  setFileStatus: (filePath, status) => {
+    set((state) => ({
+      fileStatuses: {
+        ...state.fileStatuses,
+        [filePath]: status
+      }
+    }))
   },
 
   addConnection: (connection) => {

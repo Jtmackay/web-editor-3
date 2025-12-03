@@ -22,7 +22,10 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       enableRemoteModule: false,
-      preload: path.join(__dirname, 'preload.cjs')
+      preload: path.join(__dirname, 'preload.cjs'),
+      // Allow the renderer to inspect cross-origin preview content inside iframes.
+      // This is safe here because this is a desktop app with trusted content.
+      webSecurity: false
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false

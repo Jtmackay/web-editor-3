@@ -1,6 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { ChevronRight, ChevronDown, File, Folder, RefreshCw, Plus, Server, Download } from 'lucide-react'
-import { useFTPStore, FTPFile } from '../stores/ftpStore'
+import {
+  ChevronRight,
+  ChevronDown,
+  File,
+  FileCode,
+  FileJson,
+  FileText,
+  Folder,
+  RefreshCw,
+  Plus,
+  Server,
+  Download,
+  Image as ImageIcon,
+  Archive as ArchiveIcon
+} from 'lucide-react'
+import { useFTPStore, FTPFile, FileStatus } from '../stores/ftpStore'
 import { useEditorStore } from '../stores/editorStore'
 import { electronAPI } from '../utils/electronAPI'
 
@@ -25,7 +39,8 @@ const normalizeFileType = (rawType: unknown, fallback: 'file' | 'directory' = 'f
 const isDirectoryEntry = (type: unknown): boolean => normalizeFileType(type, 'file') === 'directory'
 
 const FTPExplorer: React.FC = () => {
-  const { files, isConnected, currentPath, setFiles, setLoading, setError, error } = useFTPStore()
+  const { files, isConnected, currentPath, setFiles, setLoading, setError, error, fileStatuses, setFileStatus } =
+    useFTPStore()
   const { openFile: openEditorFile } = useEditorStore()
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [folderChildren, setFolderChildren] = useState<Record<string, FTPFile[]>>({})
@@ -42,6 +57,67 @@ const FTPExplorer: React.FC = () => {
   const [syncCount, setSyncCount] = useState<number | null>(null)
   const [syncIgnorePatterns, setSyncIgnorePatterns] = useState<string[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FTPFile } | null>(null)
+
+  const getStatusForPath = (path: string): FileStatus | undefined => {
+    return fileStatuses[path]
+  }
+
+  const getStatusTextClass = (status: FileStatus | undefined): string => {
+    if (!status) return 'text-vscode-text'
+    switch (status) {
+      case 'finished':
+        return 'text-green-400'
+      case 'needs_work':
+        return 'text-yellow-300'
+      case 'not_finished':
+        return 'text-red-400'
+      default:
+        return 'text-vscode-text'
+    }
+  }
+
+  const getFileIcon = (file: FTPFile) => {
+    if (isDirectoryEntry(file.type)) {
+      return <Folder size={14} className="text-blue-400" />
+    }
+
+    const ext = file.name.split('.').pop()?.toLowerCase()
+
+    switch (ext) {
+      case 'html':
+      case 'htm':
+      case 'js':
+      case 'jsx':
+      case 'ts':
+      case 'tsx':
+        return <FileCode size={14} className="text-amber-300" />
+      case 'css':
+      case 'scss':
+      case 'sass':
+        return <FileCode size={14} className="text-sky-300" />
+      case 'json':
+        return <FileJson size={14} className="text-emerald-300" />
+      case 'md':
+      case 'markdown':
+        return <FileText size={14} className="text-slate-200" />
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'gif':
+      case 'bmp':
+      case 'svg':
+      case 'webp':
+        return <ImageIcon size={14} className="text-pink-300" />
+      case 'zip':
+      case 'gz':
+      case 'tar':
+      case 'rar':
+      case '7z':
+        return <ArchiveIcon size={14} className="text-yellow-500" />
+      default:
+        return <File size={14} className="text-gray-400" />
+    }
+  }
 
   const buildPreviewUrl = async (file: FTPFile): Promise<string | null> => {
     const rawPath = String(file.path || '')
@@ -504,6 +580,8 @@ const FTPExplorer: React.FC = () => {
     })
     return sorted.map((file) => {
       const isDirectory = isDirectoryEntry(file.type)
+      const status = getStatusForPath(file.path)
+      const statusTextClass = getStatusTextClass(status)
       return (
         <div key={file.path} className="select-none">
           <div
@@ -588,13 +666,9 @@ const FTPExplorer: React.FC = () => {
               <div className="w-3" />
             )}
             
-            {isDirectory ? (
-              <Folder size={14} className="text-blue-400" />
-            ) : (
-              <File size={14} className="text-gray-400" />
-            )}
+            {getFileIcon(file)}
             
-            <span className="text-sm flex-1">{file.name}</span>
+            <span className={`text-sm flex-1 ${statusTextClass}`}>{file.name}</span>
             {isIgnoredForSync(file) && (
               <span className="ml-2 text-[10px] px-1 py-0.5 rounded bg-vscode-border text-vscode-text-muted">
                 Ignored
@@ -743,6 +817,47 @@ const FTPExplorer: React.FC = () => {
               </button>
             </>
           )}
+          <div className="border-t border-vscode-border/60 my-1" />
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={(e) => {
+              e.stopPropagation()
+              setFileStatus(contextMenu.file.path, 'finished')
+              setContextMenu(null)
+            }}
+          >
+            Mark as Finished
+          </button>
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={(e) => {
+              e.stopPropagation()
+              setFileStatus(contextMenu.file.path, 'needs_work')
+              setContextMenu(null)
+            }}
+          >
+            Mark as Needs work
+          </button>
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={(e) => {
+              e.stopPropagation()
+              setFileStatus(contextMenu.file.path, 'not_finished')
+              setContextMenu(null)
+            }}
+          >
+            Mark as Not finished
+          </button>
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={(e) => {
+              e.stopPropagation()
+              setFileStatus(contextMenu.file.path, undefined)
+              setContextMenu(null)
+            }}
+          >
+            Clear status
+          </button>
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
             onClick={async (e) => {
