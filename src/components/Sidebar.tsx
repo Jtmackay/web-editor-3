@@ -1,11 +1,39 @@
 import React, { useState, useEffect } from 'react'
-import { FileText, Folder, Server, Users, Settings } from 'lucide-react'
+import { FileText, Server, Users, Settings, Search } from 'lucide-react'
 import FTPExplorer from './FTPExplorer'
 import UserPresence from './UserPresence'
+import SearchPanel from './SearchPanel'
 import { electronAPI } from '../utils/electronAPI'
 
 const Sidebar: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'files' | 'users' | 'settings'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'users' | 'settings'>('files')
+  const [panelWidth, setPanelWidth] = useState<number>(260)
+
+  const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    const startX = e.clientX
+    const startWidth = panelWidth
+    const minWidth = 180
+    const maxWidth = 600
+
+    const onMouseMove = (event: MouseEvent) => {
+      const delta = event.clientX - startX
+      let next = startWidth + delta
+      if (next < minWidth) next = minWidth
+      if (next > maxWidth) next = maxWidth
+      setPanelWidth(next)
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
 
   return (
     <div className="flex h-full bg-vscode-sidebar border-r border-vscode-border">
@@ -19,6 +47,15 @@ const Sidebar: React.FC = () => {
           title="Files"
         >
           <FileText size={20} />
+        </button>
+        <button
+          onClick={() => setActiveTab('search')}
+          className={`p-2 rounded transition-colors ${
+            activeTab === 'search' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
+          }`}
+          title="Search"
+        >
+          <Search size={20} />
         </button>
         <button
           onClick={() => setActiveTab('users')}
@@ -41,7 +78,7 @@ const Sidebar: React.FC = () => {
       </div>
 
       {/* Side Panel */}
-      <div className="flex-1 w-64 flex flex-col">
+      <div className="flex flex-col h-full flex-shrink-0" style={{ width: panelWidth }}>
         {activeTab === 'files' && (
           <div className="flex flex-col h-full">
             <div className="p-3 border-b border-vscode-border">
@@ -51,6 +88,15 @@ const Sidebar: React.FC = () => {
               </h3>
             </div>
             <FTPExplorer />
+          </div>
+        )}
+
+        {activeTab === 'search' && (
+          <div className="flex flex-col h-full">
+            <div className="p-3 border-b border-vscode-border">
+              <h3 className="text-sm font-semibold text-vscode-text">Search</h3>
+            </div>
+            <SearchPanel />
           </div>
         )}
         
@@ -72,6 +118,11 @@ const Sidebar: React.FC = () => {
           </div>
         )}
       </div>
+      {/* Resizer */}
+      <div
+        className="w-[3px] cursor-col-resize self-stretch bg-transparent hover:bg-vscode-border/80 active:bg-vscode-border"
+        onMouseDown={handleResizeMouseDown}
+      />
     </div>
   )
 }

@@ -38,6 +38,25 @@ declare global {
       settingsChooseSyncFolder?: () => Promise<{ success: boolean; path?: string; error?: string }>
       openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
 
+      localSaveFile: (remotePath: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>
+
+      projectSearch: (payload: { query: string; useRegex: boolean; caseSensitive: boolean }) => Promise<{
+        success: boolean
+        root?: string
+        files?: {
+          path: string
+          relativePath?: string
+          name: string
+          matches: {
+            line: number
+            column: number
+            matchText: string
+            lineText: string
+          }[]
+        }[]
+        error?: string
+      }>
+
       // Menu event listeners
       onMenuEvent: (callback: (event: any, action: string) => void) => () => void
       onSyncProgress?: (callback: (event: any, payload: { count: number }) => void) => () => void
@@ -106,6 +125,11 @@ export const electronAPI = {
           error: 'Folder picker not available'
         }),
   openExternalUrl: (url: string) => window.electronAPI?.openExternalUrl(url) || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  localSaveFile: (remotePath: string, content: string) =>
+    window.electronAPI?.localSaveFile(remotePath, content) ||
+    Promise.resolve({ success: false, error: 'Electron API not available' }),
+  projectSearch: (payload: { query: string; useRegex: boolean; caseSensitive: boolean }) =>
+    window.electronAPI?.projectSearch(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   
   onMenuEvent: (callback: (event: any, action: string) => void) => {
     if (window.electronAPI?.onMenuEvent) {

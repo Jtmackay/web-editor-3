@@ -9,6 +9,48 @@ class FTPService {
     this.currentConnection = null
     this.client.ftp.timeout = 30000
   }
+
+  async ensureConnected() {
+    try {
+      if (!this.connected || !this.client || this.client.closed) {
+        // If the client was closed due to a previous error, create a fresh instance
+        if (!this.client || this.client.closed) {
+          try {
+            this.client.close()
+          } catch {
+            // ignore close errors
+          }
+          this.client = new ftp.Client()
+          this.client.ftp.timeout = 30000
+        }
+        const cfg = this.currentConnection
+        if (!cfg) {
+          throw new Error('Not connected to FTP server')
+        }
+        const connectionOptions = {
+          host: cfg.host,
+          port: cfg.port || 21,
+          user: cfg.username,
+          password: cfg.password,
+          secure: cfg.secure || false,
+          secureOptions: cfg.secureOptions || {},
+          passive: cfg.passive !== false
+        }
+        await this.client.access(connectionOptions)
+        this.connected = true
+        if (cfg.defaultPath && cfg.defaultPath !== '/') {
+          try {
+            await this.client.cd(cfg.defaultPath)
+          } catch {
+            // ignore cd errors on reconnect
+          }
+        }
+      }
+    } catch (error) {
+      this.connected = false
+      throw new Error(`FTP connection failed: ${error.message}`)
+    }
+  }
   async connect(config) {
     try {
       if (this.connected) { await this.disconnect() }
@@ -21,7 +63,7 @@ class FTPService {
   }
   async disconnect() { try { if (this.connected) { await this.client.close(); this.connected = false; this.currentConnection = null } } catch (error) { throw error } }
   async listFiles(remotePath = '/') {
-    if (!this.connected) { throw new Error('Not connected to FTP server') }
+    await this.ensureConnected()
     try {
       const files = []
       const sanitized = String(remotePath).replace(/\\/g, '/')
@@ -53,8 +95,8 @@ class FTPService {
       return files
     } catch (error) { throw new Error(`Failed to list files: ${error.message}`) }
   }
-  async downloadFile(remotePath, localPath = null) {
-    if (!this.connected) { throw new Error('Not connected to FTP server') }
+  async downloadFile(remotePath, localPath = null, _retry = false) {
+    await this.ensureConnected()
     try {
       const remote = String(remotePath).replace(/\\/g, '/')
       const posix = require('path').posix
@@ -86,27 +128,59 @@ class FTPService {
       }
       const content = await fs.readFile(localPath, 'utf-8')
       return content
-    } catch (error) { throw new Error(`Failed to download file: ${error.message}`) }
+    } catch (error) {
+      // Attempt one reconnect-and-retry if the client was closed mid-transfer
+      if (!_retry) {
+        await this.ensureConnected()
+        return this.downloadFile(remotePath, localPath, true)
+      }
+      throw new Error(`Failed to download file: ${error.message}`)
+    }
   }
-  async uploadFile(localPath, remotePath) {
-    if (!this.connected) { throw new Error('Not connected to FTP server') }
+  async uploadFile(localPath, remotePath, _retry = false) {
+    await this.ensureConnected()
     try {
       let content; let isFile = false
       try { await fs.access(localPath); isFile = (await fs.stat(localPath)).isFile() } catch { content = localPath }
       if (isFile) { await this.client.uploadFrom(localPath, remotePath) } else { const buffer = Buffer.from(content, 'utf-8'); await this.client.uploadFrom(buffer, remotePath) }
       return true
-    } catch (error) { throw new Error(`Failed to upload file: ${error.message}`) }
+    } catch (error) {
+      // If the client was closed due to overlapping tasks, reconnect once and retry
+      if (!_retry) {
+        await this.ensureConnected()
+        return this.uploadFile(localPath, remotePath, true)
+      }
+      throw new Error(`Failed to upload file: ${error.message}`)
+    }
   }
-  async createDirectory(remotePath) { if (!this.connected) { throw new Error('Not connected to FTP server') } try { await this.client.ensureDir(remotePath); return true } catch (error) { throw new Error(`Failed to create directory: ${error.message}`) } }
-  async deleteFile(remotePath) { if (!this.connected) { throw new Error('Not connected to FTP server') } try { await this.client.remove(remotePath); return true } catch (error) { throw new Error(`Failed to delete file: ${error.message}`) } }
-  async deleteDirectory(remotePath) { if (!this.connected) { throw new Error('Not connected to FTP server') } try { await this.client.removeDir(remotePath); return true } catch (error) { throw new Error(`Failed to delete directory: ${error.message}`) } }
-  async rename(oldPath, newPath) { if (!this.connected) { throw new Error('Not connected to FTP server') } try { await this.client.rename(oldPath, newPath); return true } catch (error) { throw new Error(`Failed to rename: ${error.message}`) } }
-  async getFileSize(remotePath) { if (!this.connected) { throw new Error('Not connected to FTP server') } try { const size = await this.client.size(remotePath); return size } catch (error) { throw new Error(`Failed to get file size: ${error.message}`) } }
-  async exists(remotePath) { if (!this.connected) { throw new Error('Not connected to FTP server') } try { await this.client.cd(remotePath); return { exists: true, type: 'directory' } } catch { try { await this.client.size(remotePath); return { exists: true, type: 'file' } } catch { return { exists: false } } } }
+  async createDirectory(remotePath) {
+    await this.ensureConnected()
+    try { await this.client.ensureDir(remotePath); return true } catch (error) { throw new Error(`Failed to create directory: ${error.message}`) }
+  }
+  async deleteFile(remotePath) {
+    await this.ensureConnected()
+    try { await this.client.remove(remotePath); return true } catch (error) { throw new Error(`Failed to delete file: ${error.message}`) }
+  }
+  async deleteDirectory(remotePath) {
+    await this.ensureConnected()
+    try { await this.client.removeDir(remotePath); return true } catch (error) { throw new Error(`Failed to delete directory: ${error.message}`) }
+  }
+  async rename(oldPath, newPath) {
+    await this.ensureConnected()
+    try { await this.client.rename(oldPath, newPath); return true } catch (error) { throw new Error(`Failed to rename: ${error.message}`) }
+  }
+  async getFileSize(remotePath) {
+    await this.ensureConnected()
+    try { const size = await this.client.size(remotePath); return size } catch (error) { throw new Error(`Failed to get file size: ${error.message}`) }
+  }
+  async exists(remotePath) {
+    await this.ensureConnected()
+    try { await this.client.cd(remotePath); return { exists: true, type: 'directory' } } catch { try { await this.client.size(remotePath); return { exists: true, type: 'file' } } catch { return { exists: false } } }
+  }
   isConnected() { return this.connected }
   getCurrentConnection() { return this.currentConnection }
   async syncToLocal(remoteRoot, localRoot, ignorePatterns = [], onProgress) {
-    if (!this.connected) { throw new Error('Not connected to FTP server') }
+    await this.ensureConnected()
     if (!localRoot) { throw new Error('Local sync folder is not set') }
     const nodePath = require('path')
     const fsNative = require('fs').promises

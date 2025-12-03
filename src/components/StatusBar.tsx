@@ -4,7 +4,7 @@ import { useFTPStore } from '../stores/ftpStore'
 import { FileText, Users, GitBranch } from 'lucide-react'
 
 const StatusBar: React.FC = () => {
-  const { activeFile } = useEditorStore()
+  const { activeFile, error, statusMessage } = useEditorStore()
   const { isConnected, currentPath } = useFTPStore()
 
   return (
@@ -30,19 +30,13 @@ const StatusBar: React.FC = () => {
       </div>
       
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1">
-          <Users size={12} />
-          <span>1 user online</span>
-        </div>
-        
-        <div className="flex items-center gap-1">
-          <GitBranch size={12} />
-          <span>main</span>
-        </div>
-        
-        <div>
-          <span>UTF-8</span>
-        </div>
+        {(error || statusMessage) && (
+          <div className="max-w-xs truncate" title={error || statusMessage || undefined}>
+            <span className={error ? 'text-red-400' : 'text-green-400'}>
+              {error || statusMessage}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

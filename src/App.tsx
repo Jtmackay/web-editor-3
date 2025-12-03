@@ -25,22 +25,53 @@ function App() {
         if (!activeId) return
         const file = state.openFiles.find(f => f.id === activeId)
         if (!file) return
-        const res = await electronAPI.ftpUploadFile(file.content, file.path)
+        const res = await electronAPI.localSaveFile(file.path, file.content)
         if (res.success) {
           useEditorStore.getState().setFileDirty(file.id, false)
+          useEditorStore.getState().setStatusMessage(`Saved to sync folder: ${file.path}`)
+          useEditorStore.getState().setError(null)
         } else {
-          useEditorStore.getState().setError(res.error || 'Failed to save file')
+          useEditorStore.getState().setError(res.error || 'Failed to save file to sync folder')
+          useEditorStore.getState().setStatusMessage(null)
         }
       } else if (action === 'menu-save-all') {
+        let savedCount = 0
+        let failed = false
         for (const file of state.openFiles) {
           if (file.isDirty) {
-            const res = await electronAPI.ftpUploadFile(file.content, file.path)
+            const res = await electronAPI.localSaveFile(file.path, file.content)
             if (res.success) {
               useEditorStore.getState().setFileDirty(file.id, false)
             } else {
-              useEditorStore.getState().setError(res.error || `Failed to save ${file.name}`)
+              useEditorStore.getState().setError(res.error || `Failed to save ${file.name} to sync folder`)
+              failed = true
             }
+            savedCount += res.success ? 1 : 0
           }
+        }
+        if (savedCount > 0 && !failed) {
+          useEditorStore.getState().setStatusMessage(`Saved ${savedCount} file(s) to sync folder`)
+          useEditorStore.getState().setError(null)
+        }
+      } else if (action === 'menu-save-and-sync') {
+        const activeId = state.activeFile
+        if (!activeId) return
+        const file = state.openFiles.find(f => f.id === activeId)
+        if (!file) return
+        const localRes = await electronAPI.localSaveFile(file.path, file.content)
+        if (!localRes.success || !localRes.path) {
+          useEditorStore.getState().setError(localRes.error || 'Failed to save file to sync folder')
+          useEditorStore.getState().setStatusMessage(null)
+          return
+        }
+        const ftpRes = await electronAPI.ftpUploadFile(localRes.path, file.path)
+        if (ftpRes.success) {
+          useEditorStore.getState().setFileDirty(file.id, false)
+          useEditorStore.getState().setStatusMessage(`Saved and synced to server: ${file.path}`)
+          useEditorStore.getState().setError(null)
+        } else {
+          useEditorStore.getState().setError(ftpRes.error || 'File saved locally, but failed to sync to server')
+          useEditorStore.getState().setStatusMessage(null)
         }
       } else if (action === 'menu-save-as') {
         const activeId = state.activeFile
@@ -85,3 +116,4 @@ function App() {
 }
 
 export default App
+

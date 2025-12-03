@@ -16,6 +16,7 @@ interface EditorState {
   isLoading: boolean
   error: string | null
   currentUserId: number | null
+  statusMessage: string | null
 }
 
 interface EditorActions {
@@ -28,6 +29,7 @@ interface EditorActions {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   setCurrentUserId: (id: number) => void
+  setStatusMessage: (message: string | null) => void
 }
 
 export const useEditorStore = create<EditorState & EditorActions>((set, get) => ({
@@ -37,6 +39,7 @@ export const useEditorStore = create<EditorState & EditorActions>((set, get) => 
   isLoading: false,
   error: null,
   currentUserId: null,
+  statusMessage: null,
 
   // Actions
   openFile: (file) => {
@@ -112,9 +115,11 @@ export const useEditorStore = create<EditorState & EditorActions>((set, get) => 
 
   setError: (error) => {
     set({ error })
-  }
-  ,
+  },
   setCurrentUserId: (id) => {
     set({ currentUserId: id })
+  },
+  setStatusMessage: (message) => {
+    set({ statusMessage: message })
   }
 }))

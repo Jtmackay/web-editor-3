@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, Menu, shell, dialog } = require('electron')
 const path = require('path')
+const fs = require('fs').promises
 const { FTPService } = require('./services/ftpService.cjs')
 const { DatabaseService } = require('./services/databaseService.cjs')
 const { FileCacheService } = require('./services/fileCacheService.cjs')
@@ -62,8 +63,9 @@ function createMenu() {
         { label: 'Open File', accelerator: 'CmdOrCtrl+O', click: () => mainWindow.webContents.send('menu-open-file') },
         { type: 'separator' },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => mainWindow.webContents.send('menu-save-file') },
+        { label: 'Save and Sync to Server', accelerator: 'CmdOrCtrl+Alt+S', click: () => mainWindow.webContents.send('menu-save-and-sync') },
         { label: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow.webContents.send('menu-save-as') },
-        { label: 'Save All', accelerator: 'CmdOrCtrl+Alt+S', click: () => mainWindow.webContents.send('menu-save-all') },
+        { label: 'Save All', accelerator: 'CmdOrCtrl+Shift+Alt+S', click: () => mainWindow.webContents.send('menu-save-all') },
         { type: 'separator' },
         { label: 'Exit', accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q', click: () => app.quit() }
       ]
@@ -116,41 +118,91 @@ function createMenu() {
 }
 
 function setupIPC() {
+  let ftpQueue = Promise.resolve()
+  const runQueued = (fn) => {
+    const next = ftpQueue.then(fn, fn)
+    ftpQueue = next.then(() => undefined, () => undefined)
+    return next
+  }
+
   ipcMain.handle('ftp-connect', async (event, config) => {
-    try { await ftpService.connect(config); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    return runQueued(async () => {
+      try { await ftpService.connect(config); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    })
   })
   ipcMain.handle('ftp-disconnect', async () => {
-    try { await ftpService.disconnect(); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    return runQueued(async () => {
+      try { await ftpService.disconnect(); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    })
   })
   ipcMain.handle('ftp-list-files', async (event, p = '/') => {
-    try { const files = await ftpService.listFiles(p); return { success: true, files } } catch (error) { return { success: false, error: error.message } }
+    return runQueued(async () => {
+      try { const files = await ftpService.listFiles(p); return { success: true, files } } catch (error) { return { success: false, error: error.message } }
+    })
   })
   ipcMain.handle('ftp-list-all', async (event, p = '/') => {
-    try {
-      const files = await ftpService.listFiles(p)
-      return { success: true, tree: files }
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
+    return runQueued(async () => {
+      try {
+        const files = await ftpService.listFiles(p)
+        return { success: true, tree: files }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
   })
   ipcMain.handle('ftp-download-file', async (event, remotePath, localPath) => {
-    try { const content = await ftpService.downloadFile(remotePath, localPath); return { success: true, content } } catch (error) { return { success: false, error: error.message } }
+    return runQueued(async () => {
+      try { const content = await ftpService.downloadFile(remotePath, localPath); return { success: true, content } } catch (error) { return { success: false, error: error.message } }
+    })
   })
   ipcMain.handle('ftp-upload-file', async (event, localPath, remotePath) => {
-    try { await ftpService.uploadFile(localPath, remotePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    return runQueued(async () => {
+      try { await ftpService.uploadFile(localPath, remotePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    })
   })
   ipcMain.handle('ftp-sync-to-local', async (event, remoteRoot, localRoot, ignorePatterns) => {
     let lastCount = 0
+    return runQueued(async () => {
+      try {
+        const result = await ftpService.syncToLocal(remoteRoot, localRoot, ignorePatterns, (count) => {
+          lastCount = count
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('ftp-sync-progress', { count })
+          }
+        })
+        return { success: true, count: lastCount, root: result && result.root }
+      } catch (error) {
+        return { success: false, error: error.message, count: lastCount }
+      }
+    })
+  })
+
+  ipcMain.handle('local-save-file', async (event, remotePath, content) => {
     try {
-      const result = await ftpService.syncToLocal(remoteRoot, localRoot, ignorePatterns, (count) => {
-        lastCount = count
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('ftp-sync-progress', { count })
-        }
-      })
-      return { success: true, count: lastCount, root: result && result.root }
+      const syncRoot = settingsService.getSyncFolder()
+      if (!syncRoot) {
+        return { success: false, error: 'Sync folder is not configured. Set it in the Settings tab.' }
+      }
+
+      const normalizeRemote = (p) => {
+        if (!p) return '/'
+        let out = String(p).replace(/\\/g, '/')
+        if (!out.startsWith('/')) out = '/' + out
+        return out
+      }
+
+      const normalized = normalizeRemote(remotePath)
+      const relative = normalized.replace(/^\/+/, '')
+      const segments = relative.split('/').filter(Boolean)
+      const localPath = path.join(syncRoot, ...segments)
+
+      const dir = path.dirname(localPath)
+      await fs.mkdir(dir, { recursive: true })
+      await fs.writeFile(localPath, content ?? '', 'utf-8')
+
+      return { success: true, path: localPath }
     } catch (error) {
-      return { success: false, error: error.message, count: lastCount }
+      return { success: false, error: error.message }
     }
   })
 
@@ -257,6 +309,119 @@ function setupIPC() {
       const folderPath = result.filePaths[0]
       settingsService.setSyncFolder(folderPath)
       return { success: true, path: folderPath }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('project-search', async (_event, payload) => {
+    const { query, useRegex, caseSensitive } = payload || {}
+    if (!query || !String(query).trim()) {
+      return { success: true, files: [] }
+    }
+
+    try {
+      const syncRoot = settingsService.getSyncFolder()
+      if (!syncRoot) {
+        return { success: false, error: 'Sync folder is not configured. Set it in Settings and run a sync first.' }
+      }
+
+      const entries = await fs.readdir(syncRoot, { withFileTypes: true })
+      const dirEntries = entries.filter(e => e.isDirectory())
+      if (!dirEntries.length) {
+        return { success: false, error: 'No synced snapshots found in the sync folder. Run a sync first.' }
+      }
+
+      const timePattern = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}$/
+      const candidates = dirEntries.map(d => d.name)
+      const stamped = candidates.filter(name => timePattern.test(name))
+      const chosen = (stamped.length ? stamped : candidates).sort().slice(-1)[0]
+      const root = path.join(syncRoot, chosen)
+
+      const source = useRegex ? String(query) : String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const flags = caseSensitive ? 'g' : 'gi'
+      let regex
+      try {
+        regex = new RegExp(source, flags)
+      } catch (err) {
+        return { success: false, error: 'Invalid regular expression' }
+      }
+
+      const maxFileSizeBytes = 1024 * 1024
+      const skipDirs = new Set(['.git', 'node_modules', 'dist', 'build', '.cache'])
+      const skipExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.mp4', '.mp3', '.woff', '.woff2', '.ttf', '.eot', '.zip', '.tar', '.gz'])
+
+      const results = []
+
+      const walk = async (dir) => {
+        let items
+        try {
+          items = await fs.readdir(dir, { withFileTypes: true })
+        } catch {
+          return
+        }
+        for (const item of items) {
+          const fullPath = path.join(dir, item.name)
+          if (item.isDirectory()) {
+            if (skipDirs.has(item.name)) continue
+            await walk(fullPath)
+          } else {
+            const ext = path.extname(item.name).toLowerCase()
+            if (skipExtensions.has(ext)) continue
+            let stat
+            try {
+              stat = await fs.stat(fullPath)
+            } catch {
+              continue
+            }
+            if (!stat.isFile() || stat.size > maxFileSizeBytes) continue
+
+            let content
+            try {
+              content = await fs.readFile(fullPath, 'utf-8')
+            } catch {
+              continue
+            }
+            if (!content) continue
+
+            const lines = content.split(/\r?\n/)
+            const fileMatches = []
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i]
+              if (!line) continue
+              const lineRegex = new RegExp(regex.source, regex.flags)
+              let m
+              while ((m = lineRegex.exec(line)) !== null) {
+                const matchText = m[0]
+                const column = m.index + 1
+                fileMatches.push({
+                  line: i + 1,
+                  column,
+                  matchText,
+                  lineText: line
+                })
+                if (matchText.length === 0) {
+                  lineRegex.lastIndex += 1
+                }
+              }
+            }
+
+            if (fileMatches.length) {
+              const relativePath = path.relative(root, fullPath)
+              results.push({
+                path: fullPath,
+                relativePath,
+                name: item.name,
+                matches: fileMatches
+              })
+            }
+          }
+        }
+      }
+
+      await walk(root)
+
+      return { success: true, files: results, root }
     } catch (error) {
       return { success: false, error: error.message }
     }

@@ -33,6 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsSetSyncFolder: (path) => ipcRenderer.invoke('settings-set-sync-folder', path),
   settingsChooseSyncFolder: () => ipcRenderer.invoke('settings-choose-sync-folder'),
 
+  projectSearch: (payload) => ipcRenderer.invoke('project-search', payload),
+
+  localSaveFile: (remotePath, content) => ipcRenderer.invoke('local-save-file', remotePath, content),
+
   openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
 
   onMenuEvent: (callback) => {
@@ -40,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'menu-new-file',
       'menu-open-file',
       'menu-save-file',
+      'menu-save-and-sync',
       'menu-save-as',
       'menu-save-all',
       'menu-find',
