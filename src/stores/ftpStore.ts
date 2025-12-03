@@ -24,6 +24,23 @@ export interface FTPFile {
 
 export type FileStatus = 'finished' | 'not_finished' | 'needs_work'
 
+const FILE_STATUS_STORAGE_KEY = 'ftpFileStatuses'
+
+const loadInitialFileStatuses = (): Record<string, FileStatus | undefined> => {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(FILE_STATUS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, FileStatus | undefined>
+    }
+  } catch {
+    // ignore corrupted/missing storage
+  }
+  return {}
+}
+
 interface FTPState {
   connections: FTPConnection[]
   activeConnection: string | null
@@ -60,7 +77,7 @@ export const useFTPStore = create<FTPState & FTPActions>((set, get) => ({
   isConnected: false,
   currentPath: '/',
   files: [],
-  fileStatuses: {},
+  fileStatuses: loadInitialFileStatuses(),
   isLoading: false,
   error: null,
 
@@ -94,12 +111,24 @@ export const useFTPStore = create<FTPState & FTPActions>((set, get) => ({
   },
 
   setFileStatus: (filePath, status) => {
-    set((state) => ({
-      fileStatuses: {
-        ...state.fileStatuses,
-        [filePath]: status
+    set((state) => {
+      const next = { ...state.fileStatuses }
+      if (status) {
+        next[filePath] = status
+      } else {
+        delete next[filePath]
       }
-    }))
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(FILE_STATUS_STORAGE_KEY, JSON.stringify(next))
+        } catch {
+          // ignore storage errors
+        }
+      }
+
+      return { fileStatuses: next }
+    })
   },
 
   addConnection: (connection) => {

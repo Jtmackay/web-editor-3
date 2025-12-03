@@ -6,6 +6,10 @@ const { DatabaseService } = require('./services/databaseService.cjs')
 const { FileCacheService } = require('./services/fileCacheService.cjs')
 const { SettingsService } = require('./services/settingsService.cjs')
 
+// Some GPUs / drivers on Windows can crash when using GPU acceleration.
+// Disable it globally so the app can start reliably.
+app.disableHardwareAcceleration()
+
 let mainWindow
 let ftpService
 let databaseService

@@ -84,13 +84,14 @@ const FTPExplorer: React.FC = () => {
     const ext = file.name.split('.').pop()?.toLowerCase()
 
     switch (ext) {
-      case 'html':
-      case 'htm':
       case 'js':
       case 'jsx':
       case 'ts':
       case 'tsx':
         return <FileCode size={14} className="text-amber-300" />
+      case 'html':
+      case 'htm':
+        return <FileCode size={14} className="text-green-400" />
       case 'css':
       case 'scss':
       case 'sass':
@@ -826,7 +827,10 @@ const FTPExplorer: React.FC = () => {
               setContextMenu(null)
             }}
           >
-            Mark as Finished
+            <span className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-400" />
+              <span>Mark as Finished</span>
+            </span>
           </button>
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
@@ -836,7 +840,10 @@ const FTPExplorer: React.FC = () => {
               setContextMenu(null)
             }}
           >
-            Mark as Needs work
+            <span className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-yellow-300" />
+              <span>Mark as Needs work</span>
+            </span>
           </button>
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
@@ -846,7 +853,10 @@ const FTPExplorer: React.FC = () => {
               setContextMenu(null)
             }}
           >
-            Mark as Not finished
+            <span className="inline-flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-red-400" />
+              <span>Mark as Not finished</span>
+            </span>
           </button>
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react'
-import { FileText, Server, Users, Settings, Search } from 'lucide-react'
+import { FileText, Server, Users, Settings, Search, ListChecks } from 'lucide-react'
 import FTPExplorer from './FTPExplorer'
 import UserPresence from './UserPresence'
 import SearchPanel from './SearchPanel'
+import TodoPanel from './TodoPanel'
 import { electronAPI } from '../utils/electronAPI'
 
 const Sidebar: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'users' | 'settings'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'todo' | 'users' | 'settings'>('files')
   const [panelWidth, setPanelWidth] = useState<number>(260)
 
   const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -58,6 +59,17 @@ const Sidebar: React.FC = () => {
           <Search size={20} />
         </button>
         <button
+          onClick={() => setActiveTab('todo')}
+          className={`p-2 rounded transition-colors ${
+            activeTab === 'todo'
+              ? 'bg-vscode-selection text-white'
+              : 'text-vscode-text-muted hover:bg-vscode-hover'
+          }`}
+          title="To Do"
+        >
+          <ListChecks size={20} />
+        </button>
+        <button
           onClick={() => setActiveTab('users')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'users' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
@@ -97,6 +109,15 @@ const Sidebar: React.FC = () => {
               <h3 className="text-sm font-semibold text-vscode-text">Search</h3>
             </div>
             <SearchPanel />
+          </div>
+        )}
+
+        {activeTab === 'todo' && (
+          <div className="flex flex-col h-full">
+            <div className="p-3 border-b border-vscode-border">
+              <h3 className="text-sm font-semibold text-vscode-text">To Do</h3>
+            </div>
+            <TodoPanel />
           </div>
         )}
         
