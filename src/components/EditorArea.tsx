@@ -4,13 +4,38 @@ import MonacoEditor from './MonacoEditor'
 import EditorTabs from './EditorTabs'
 import InspectPanel from './InspectPanel'
 
-const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
+interface BrowserPreviewProps {
+  url: string
+  /**
+   * Whether this preview tab is currently the active/visible tab.
+   * Used to capture and restore scroll position when switching tabs.
+   */
+  isActive: boolean
+}
+
+const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, isActive }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [showInspect, setShowInspect] = useState(false)
   const [selectedElement, setSelectedElement] = useState<any>(null)
   const [pendingElement, setPendingElement] = useState<any>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [inspectPanelWidth, setInspectPanelWidth] = useState(450)
+  const [editingText, setEditingText] = useState<{
+    path: string
+    text: string
+    originalText: string
+    kind: 'text' | 'html'
+  } | null>(null)
+  const [latestTextChange, setLatestTextChange] = useState<{
+    token: number
+    path: string
+    oldText: string
+    newText: string
+    kind?: 'text' | 'html'
+  } | null>(null)
+  const textChangeTokenRef = useRef(0)
+  const [resetChangesToken, setResetChangesToken] = useState(0)
+  const scrollPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   useEffect(() => {
     const iframe = iframeRef.current
@@ -85,6 +110,26 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
                 } else if (current.className && typeof current.className === 'string') {
                   selector += '.' + current.className.split(' ').join('.');
                 }
+
+                // Disambiguate siblings: add :nth-of-type when there are multiple
+                // elements with the same tag under the same parent.
+                const parent = current.parentElement;
+                if (parent) {
+                  const sameTagSiblings = [];
+                  for (var i = 0; i < parent.children.length; i++) {
+                    var child = parent.children[i];
+                    if (child.tagName === current.tagName) {
+                      sameTagSiblings.push(child);
+                    }
+                  }
+                  if (sameTagSiblings.length > 1) {
+                    var index = sameTagSiblings.indexOf(current);
+                    if (index !== -1) {
+                      selector += ':nth-of-type(' + (index + 1) + ')';
+                    }
+                  }
+                }
+
                 path.unshift(selector);
                 current = current.parentElement;
               }
@@ -167,6 +212,7 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
                 tagName: element.tagName,
                 id: element.id || '',
                 className: element.className || '',
+                textContent: element.textContent || '',
                 path: getElementPath(element),
                 domTree: buildDOMTree(document.body),
                 styles: {
@@ -192,16 +238,38 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
             // by its path (as used in the DOM tree).
             window.addEventListener('message', function(e) {
               try {
-                if (!e.data || e.data.type !== 'inspectByPath' || !e.data.path) return;
-                var el = document.querySelector(e.data.path);
-                if (!el) return;
-                var elementInfo = getElementInfo(el);
-                window.parent.postMessage({
-                  type: 'inspectElementByPath',
-                  data: elementInfo
-                }, '*');
+                if (!e.data || typeof e.data.type !== 'string') return;
+
+                if (e.data.type === 'inspectByPath' && e.data.path) {
+                  var el = document.querySelector(e.data.path);
+                  if (!el) return;
+                  var elementInfo = getElementInfo(el);
+                  window.parent.postMessage({
+                    type: 'inspectElementByPath',
+                    data: elementInfo
+                  }, '*');
+                  return;
+                }
+
+                if (e.data.type === 'getScrollPosition') {
+                  var sx = window.scrollX || window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+                  var sy = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                  window.parent.postMessage({
+                    type: 'scrollPosition',
+                    scrollX: sx,
+                    scrollY: sy
+                  }, '*');
+                  return;
+                }
+
+                if (e.data.type === 'setScrollPosition') {
+                  var targetX = typeof e.data.scrollX === 'number' ? e.data.scrollX : (window.scrollX || window.pageXOffset || 0);
+                  var targetY = typeof e.data.scrollY === 'number' ? e.data.scrollY : (window.scrollY || window.pageYOffset || 0);
+                  window.scrollTo(targetX || 0, targetY || 0);
+                  return;
+                }
               } catch (err) {
-                console.error('inspectByPath failed', err);
+                console.error('iframe message handler error', err);
               }
             });
           })();
@@ -235,6 +303,10 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
         // the inspect panel is visible.
         setSelectedElement(event.data.data)
         setShowInspect(true)
+      } else if (event.data.type === 'scrollPosition') {
+        const sx = typeof event.data.scrollX === 'number' ? event.data.scrollX : 0
+        const sy = typeof event.data.scrollY === 'number' ? event.data.scrollY : 0
+        scrollPosRef.current = { x: sx, y: sy }
       }
     }
 
@@ -251,6 +323,43 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
       window.removeEventListener('click', handleClick)
     }
   }, [])
+
+  // When the preview tab becomes inactive, ask the iframe to report its scroll
+  // position. When it becomes active again, restore the last known position.
+  useEffect(() => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    try {
+      const iframeWin = iframe.contentWindow
+      if (!iframeWin) return
+
+      if (!isActive) {
+        // Capture current scroll position (no-op if the injected script is unavailable)
+        iframeWin.postMessage(
+          {
+            type: 'getScrollPosition'
+          },
+          '*'
+        )
+      } else {
+        // Restore the last known scroll position for this preview
+        const { x, y } = scrollPosRef.current
+        if (x !== 0 || y !== 0) {
+          iframeWin.postMessage(
+            {
+              type: 'setScrollPosition',
+              scrollX: x,
+              scrollY: y
+            },
+            '*'
+          )
+        }
+      }
+    } catch (err) {
+      console.error('Failed to sync preview scroll position:', err)
+    }
+  }, [isActive])
 
   const handleSelectElement = (path: string) => {
     const iframe = iframeRef.current
@@ -490,6 +599,8 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
                 setSelectedElement(null)
                 setPendingElement(null)
                 setShowInspect(false)
+                setLatestTextChange(null)
+                setResetChangesToken((t) => t + 1)
                 const iframe = iframeRef.current
                 if (iframe) {
                   try {
@@ -507,6 +618,44 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
               }}
             >
               Refresh
+            </button>
+            <button
+              className="block w-full text-left px-3 py-2 hover:bg-vscode-hover border-b border-vscode-border"
+              onClick={() => {
+                setContextMenu(null)
+                const path = pendingElement?.path
+                if (!path || !iframeRef.current) {
+                  return
+                }
+                let text = ''
+                let kind: 'text' | 'html' = 'text'
+                try {
+                  const iframeWin = iframeRef.current.contentWindow
+                  const iframeDoc = iframeWin?.document
+                  const el = iframeDoc?.querySelector(path) as HTMLElement | null
+                  if (el) {
+                    const hasElementChildren = !!(el.children && el.children.length > 0)
+                    if (hasElementChildren) {
+                      // Rich text node (contains nested markup): edit innerHTML so we
+                      // preserve links, <br>, etc.
+                      kind = 'html'
+                      text = el.innerHTML || ''
+                    } else {
+                      kind = 'text'
+                      const current =
+                        typeof (el as any).innerText === 'string'
+                          ? (el as any).innerText
+                          : el.textContent || ''
+                      text = current
+                    }
+                  }
+                } catch (err) {
+                  console.error('Failed to read element text for editing:', err)
+                }
+                setEditingText({ path, text, originalText: text, kind })
+              }}
+            >
+              Edit text
             </button>
             <button
               className="block w-full text-left px-3 py-2 hover:bg-vscode-hover"
@@ -535,6 +684,74 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
             )}
           </div>
         )}
+        {editingText && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[420px] max-w-[90%] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold">Edit text</h2>
+                <button
+                  className="text-xs px-2 py-1 rounded hover:bg-vscode-hover"
+                  onClick={() => setEditingText(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+              <textarea
+                className="w-full h-32 bg-vscode-sidebar border border-vscode-border rounded p-2 text-xs resize-none outline-none"
+                value={editingText.text}
+                onChange={(e) =>
+                  setEditingText((prev) =>
+                    prev ? { ...prev, text: e.target.value } : prev
+                  )
+                }
+              />
+              <div className="mt-3 flex justify-end gap-2 text-xs">
+                <button
+                  className="px-3 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover"
+                  onClick={() => setEditingText(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-500"
+                  onClick={() => {
+                    if (!editingText?.path || !iframeRef.current) {
+                      setEditingText(null)
+                      return
+                    }
+                    try {
+                      const iframeWin = iframeRef.current.contentWindow
+                      const iframeDoc = iframeWin?.document
+                      const el = iframeDoc?.querySelector(editingText.path) as
+                        | HTMLElement
+                        | null
+                      if (el) {
+                        if (editingText.kind === 'html') {
+                          el.innerHTML = editingText.text
+                        } else {
+                          ;(el as any).innerText = editingText.text
+                        }
+                      }
+                    } catch (err) {
+                      console.error('Failed to update element text:', err)
+                    }
+                    // Record the text change so the InspectPanel "Changes" tab can display it.
+                    setLatestTextChange({
+                      token: ++textChangeTokenRef.current,
+                      path: editingText.path,
+                      oldText: editingText.originalText,
+                      newText: editingText.text,
+                      kind: editingText.kind
+                    })
+                    setEditingText(null)
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       {showInspect && (
         <InspectPanel
@@ -548,6 +765,27 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
           onRemoveInlineStyle={handleRemoveInlineStyle}
           onReorderInlineStyles={handleReorderInlineStyles}
           onUpdateRuleStyle={handleUpdateRuleStyle}
+          onToggleTextChange={({ path, oldText, newText, enable, kind }) => {
+            const iframe = iframeRef.current
+            if (!iframe) return
+            try {
+              const iframeWin = iframe.contentWindow
+              const iframeDoc = iframeWin?.document
+              const el = iframeDoc?.querySelector(path) as HTMLElement | null
+              if (el) {
+                const mode: 'text' | 'html' = kind === 'html' ? 'html' : 'text'
+                if (mode === 'html') {
+                  el.innerHTML = enable ? newText : oldText
+                } else {
+                  ;(el as any).innerText = enable ? newText : oldText
+                }
+              }
+            } catch (err) {
+              console.error('Failed to toggle text change:', err)
+            }
+          }}
+          latestTextChange={latestTextChange}
+          resetChangesToken={resetChangesToken}
         />
       )}
     </div>
@@ -557,17 +795,35 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
 const EditorArea: React.FC = () => {
   const { activeFile, openFiles } = useEditorStore()
   const currentFile = openFiles.find((f) => f.id === activeFile) || null
+  const previewFiles = openFiles.filter((f) => f.kind === 'preview')
 
   return (
     <div className="flex-1 flex flex-col bg-vscode-bg">
       <EditorTabs />
-      <div className="flex-1">
+      <div className="flex-1 relative">
         {currentFile ? (
-          currentFile.kind === 'preview' ? (
-            <BrowserPreview url={currentFile.previewUrl || ''} />
-          ) : (
-            <MonacoEditor />
-          )
+          <>
+            {/* Keep the Monaco editor mounted at all times; just hide it when a preview tab is active */}
+            <div
+              className={`absolute inset-0 ${
+                currentFile.kind === 'preview' ? 'hidden' : 'block'
+              }`}
+            >
+              <MonacoEditor />
+            </div>
+
+            {/* Keep each preview iframe mounted while its tab is open; toggle visibility on tab switch */}
+            {previewFiles.map((file) => (
+              <div
+                key={file.id}
+                className={`absolute inset-0 ${
+                  file.id === activeFile && file.previewUrl ? 'block' : 'hidden'
+                }`}
+              >
+                <BrowserPreview url={file.previewUrl || ''} isActive={file.id === activeFile} />
+              </div>
+            ))}
+          </>
         ) : (
           <div className="flex items-center justify-center h-full text-vscode-text-muted">
             <div className="text-center">

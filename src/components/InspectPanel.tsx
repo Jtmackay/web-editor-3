@@ -260,6 +260,20 @@ interface InspectPanelProps {
     property: string,
     value: string
   ) => void
+  onToggleTextChange?: (payload: {
+    path: string
+    oldText: string
+    newText: string
+    enable: boolean
+    kind?: 'text' | 'html'
+  }) => void
+  latestTextChange?: {
+    token: number
+    path: string
+    oldText: string
+    newText: string
+  } | null
+  resetChangesToken?: number
 }
 
 const InspectPanel: React.FC<InspectPanelProps> = ({
@@ -272,7 +286,10 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   onAddInlineStyle,
   onRemoveInlineStyle,
   onReorderInlineStyles,
-  onUpdateRuleStyle
+  onUpdateRuleStyle,
+  onToggleTextChange,
+  latestTextChange: externalTextChange,
+  resetChangesToken
 }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
@@ -287,7 +304,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   const [changes, setChanges] = useState<
     {
       id: number
-      scope: 'inline' | 'rule'
+      scope: 'inline' | 'rule' | 'text'
       type: 'set' | 'remove' | 'reorder'
       property?: string
       oldValue?: string | null
@@ -297,6 +314,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
       inlineOrder?: string[]
       elementPath?: string
       active?: boolean
+      contentKind?: 'text' | 'html'
     }[]
   >([])
   const panelRef = useRef<HTMLDivElement>(null)
@@ -306,6 +324,8 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   const widthDragStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const dragInlinePropRef = useRef<string | null>(null)
   const changeIdRef = useRef(0)
+  const lastTextChangeTokenRef = useRef<number | null>(null)
+  const lastResetTokenRef = useRef<number | null>(null)
 
   useEffect(() => {
     // Reset changed markers when switching to a different element
@@ -323,16 +343,20 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   const isPropChanged = (scope: 'inline' | 'rule', prop: string) =>
     changedProps.has(`${scope}:${prop}`)
 
-  const recordChange = (entry: {
-    scope: 'inline' | 'rule'
-    type: 'set' | 'remove' | 'reorder'
-    property?: string
-    oldValue?: string | null
-    newValue?: string | null
-    selector?: string
-    source?: string
-    inlineOrder?: string[]
-  }) => {
+  const recordChange = (
+    entry: {
+      scope: 'inline' | 'rule' | 'text'
+      type: 'set' | 'remove' | 'reorder'
+      property?: string
+      oldValue?: string | null
+      newValue?: string | null
+      selector?: string
+      source?: string
+      inlineOrder?: string[]
+      elementPath?: string
+      contentKind?: 'text' | 'html'
+    }
+  ) => {
     setChanges((prev) => {
       const elementPath = selectedElement?.path
       const last = prev[prev.length - 1]
@@ -379,6 +403,42 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
       return keys
     })
   }, [selectedElement?.styles?.inline, selectedElement?.path])
+
+  // Ingest external text content edits (from the preview "Edit text" dialog)
+  useEffect(() => {
+    if (!externalTextChange) return
+    if (externalTextChange.token === lastTextChangeTokenRef.current) return
+    lastTextChangeTokenRef.current = externalTextChange.token
+
+    recordChange({
+      scope: 'text',
+      type: 'set',
+      property: 'text',
+      oldValue: externalTextChange.oldText,
+      newValue: externalTextChange.newText,
+      elementPath: externalTextChange.path,
+      contentKind: externalTextChange.kind === 'html' ? 'html' : 'text'
+    })
+  }, [externalTextChange])
+
+  // Clear all tracked changes when the preview signals a reset (e.g. Refresh)
+  useEffect(() => {
+    if (resetChangesToken === undefined) return
+
+    // Ignore the first run on mount so we don't immediately wipe out
+    // any pending text changes that were made while the panel was closed.
+    if (lastResetTokenRef.current === null) {
+      lastResetTokenRef.current = resetChangesToken
+      return
+    }
+
+    // Only react when the token actually changes (e.g. Refresh clicked)
+    if (lastResetTokenRef.current === resetChangesToken) return
+    lastResetTokenRef.current = resetChangesToken
+
+    setChanges([])
+    setChangedProps(new Set())
+  }, [resetChangesToken])
 
   useEffect(() => {
     // Auto-expand and scroll to the selected element (similar to Chrome DevTools)
@@ -708,14 +768,10 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
     }
 
     // Group stylesheet rules by source and maintain cascade order using sheetIndex/ruleIndex
-    const groupedRules: {
-      source: string
-      sheetIndex: number
-      rules: any[]
-    }[] = []
+    const groupedRules: any[] = []
 
     if (stylesheetRules.length > 0) {
-      const bySource = new Map<string, { source: string; sheetIndex: number; rules: any[] }>()
+      const bySource = new Map<string, any>()
       stylesheetRules.forEach((rule: any) => {
         const src = rule.source || '<style>'
         const existing = bySource.get(src)
@@ -724,14 +780,16 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
           {
             source: src,
             sheetIndex: rule.sheetIndex ?? 0,
-            rules: []
+            rules: [] as any[]
           }
         entry.rules.push(rule)
         if (!existing) bySource.set(src, entry)
       })
 
       groupedRules.push(
-        ...Array.from(bySource.values()).sort((a, b) => a.sheetIndex - b.sheetIndex)
+        ...Array.from(bySource.values()).sort(
+          (a: any, b: any) => a.sheetIndex - b.sheetIndex
+        )
       )
     }
 
@@ -1167,7 +1225,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
     if (changes.length === 0) {
       return (
         <div className="text-gray-400 text-sm p-4">
-          No style changes yet. Edit styles or add custom properties to see them here.
+          No changes yet. Edit styles or text to see them here.
         </div>
       )
     }
@@ -1179,7 +1237,9 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
             const locationLabel =
               change.scope === 'inline'
                 ? 'element.style'
-                : change.selector || 'rule'
+                : change.scope === 'rule'
+                ? change.selector || 'rule'
+                : 'text content'
 
             const sourceLabel =
               change.source !== undefined && change.source !== null
@@ -1188,10 +1248,23 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
 
             let summary = ''
             if (change.type === 'set') {
-              if (change.oldValue == null || change.oldValue === '') {
-                summary = `${change.property}: ${change.newValue}`
+              if (change.scope === 'text') {
+                const label = 'text'
+                const oldVal = change.oldValue ?? ''
+                const newVal = change.newValue ?? ''
+                if (oldVal === '') {
+                  summary = `${label}: ${JSON.stringify(newVal)}`
+                } else {
+                  summary = `${label}: ${JSON.stringify(oldVal)} → ${JSON.stringify(
+                    newVal
+                  )}`
+                }
               } else {
-                summary = `${change.property}: ${change.oldValue} → ${change.newValue}`
+                if (change.oldValue == null || change.oldValue === '') {
+                  summary = `${change.property}: ${change.newValue}`
+                } else {
+                  summary = `${change.property}: ${change.oldValue} → ${change.newValue}`
+                }
               }
             } else if (change.type === 'remove') {
               summary = `${change.property} removed (was ${change.oldValue})`
@@ -1200,7 +1273,12 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
             }
 
             const canToggle =
-              !!change.property && (change.type === 'set' || change.type === 'remove')
+              (change.scope === 'text' &&
+                !!onToggleTextChange &&
+                typeof change.newValue === 'string') ||
+              (change.scope !== 'text' &&
+                !!change.property &&
+                (change.type === 'set' || change.type === 'remove'))
             const isDisabled = change.active === false
 
             return (
@@ -1230,8 +1308,6 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                           isDisabled ? 'Undo delete (re-apply this change)' : 'Temporarily disable this change'
                         }
                         onClick={() => {
-                          if (!change.property) return
-
                           const currentlyActive = change.active !== false
                           const willBeActive = !currentlyActive
 
@@ -1242,7 +1318,21 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                             )
                           )
 
-                          if (change.scope === 'inline') {
+                          if (change.scope === 'text') {
+                            if (!onToggleTextChange) return
+                            const path = change.elementPath || ''
+                            if (!path) return
+                            const oldText = (change.oldValue ?? '') as string
+                            const newText = (change.newValue ?? '') as string
+                            onToggleTextChange({
+                              path,
+                              oldText,
+                              newText,
+                              enable: willBeActive,
+                              kind: change.contentKind
+                            })
+                          } else if (change.scope === 'inline') {
+                            if (!change.property) return
                             if (change.type === 'set') {
                               if (currentlyActive) {
                                 // Disable: revert to old value
