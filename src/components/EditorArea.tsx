@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { useEditorStore } from '../stores/editorStore'
+import { electronAPI } from '../utils/electronAPI'
 import MonacoEditor from './MonacoEditor'
 import EditorTabs from './EditorTabs'
 import InspectPanel from './InspectPanel'
@@ -7,13 +8,18 @@ import InspectPanel from './InspectPanel'
 interface BrowserPreviewProps {
   url: string
   /**
+   * Remote path of the HTML file this preview represents.
+   * This is used to save inspector edits back into the synced local file.
+   */
+  sourcePath: string
+  /**
    * Whether this preview tab is currently the active/visible tab.
    * Used to capture and restore scroll position when switching tabs.
    */
   isActive: boolean
 }
 
-const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, isActive }) => {
+const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActive }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [showInspect, setShowInspect] = useState(false)
   const [selectedElement, setSelectedElement] = useState<any>(null)
@@ -564,6 +570,171 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, isActive }) => {
     })
   }
 
+  /**
+   * Map a fully-qualified preview URL (for a stylesheet) back to the
+   * corresponding remote FTP path, using the same settings that build
+   * preview URLs for HTML files.
+   */
+  const mapResourceUrlToRemotePath = async (fullUrl: string): Promise<string | null> => {
+    if (!fullUrl) return null
+    let urlObj: URL
+    try {
+      urlObj = new URL(fullUrl)
+    } catch {
+      return null
+    }
+
+    const [baseRes, startAfterRes] = await Promise.all([
+      electronAPI.settingsGetPreviewBaseUrl(),
+      electronAPI.settingsGetPreviewStartAfter()
+    ])
+
+    const baseRaw = (baseRes.success && baseRes.baseUrl ? baseRes.baseUrl : '').trim()
+    const startAfterRaw =
+      startAfterRes.success && startAfterRes.startAfter ? startAfterRes.startAfter : ''
+
+    // If no base is configured, fall back to using just the URL pathname.
+    if (!baseRaw) {
+      return urlObj.pathname || '/'
+    }
+
+    let baseUrl: URL
+    try {
+      const hasProtocol = /^https?:\/\//i.test(baseRaw)
+      const baseStr = hasProtocol ? baseRaw : `https://${baseRaw}`
+      baseUrl = new URL(baseStr)
+    } catch {
+      return urlObj.pathname || '/'
+    }
+
+    // Only attempt to map same-origin resources.
+    if (urlObj.hostname.toLowerCase() !== baseUrl.hostname.toLowerCase()) {
+      return null
+    }
+
+    const pathPart = urlObj.pathname || '/'
+    const normalizedStart = startAfterRaw
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+
+    if (normalizedStart) {
+      const trimmed = pathPart.replace(/^\/+/, '')
+      return `/${normalizedStart}/${trimmed}`
+    }
+
+    return pathPart || '/'
+  }
+
+  const handleSaveInspectorChanges = async () => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    try {
+      const iframeWin = iframe.contentWindow
+      const iframeDoc = iframeWin?.document
+      if (!iframeDoc) return
+
+      const editorState = useEditorStore.getState()
+
+      // 1. Save the current HTML (including inline styles and text edits)
+      const htmlContent =
+        iframeDoc.documentElement && iframeDoc.documentElement.outerHTML
+          ? iframeDoc.documentElement.outerHTML
+          : ''
+
+      const htmlRemotePath = sourcePath || ''
+      if (htmlRemotePath) {
+        // Update any open editor tabs for this HTML file so the code view
+        // matches what was changed in the inspector.
+        const matchingFiles = editorState.openFiles.filter(
+          (f) => f.kind !== 'preview' && f.path === htmlRemotePath
+        )
+        matchingFiles.forEach((file) => {
+          editorState.updateFileContent(file.id, htmlContent)
+        })
+
+        const htmlRes = await electronAPI.localSaveFile(htmlRemotePath, htmlContent)
+        if (!htmlRes.success) {
+          const msg = htmlRes.error || 'Failed to save HTML to sync folder'
+          editorState.setError(msg)
+          editorState.setStatusMessage(null)
+          return
+        }
+
+        // Mark any matching editor tabs as clean after successful save.
+        matchingFiles.forEach((file) => {
+          editorState.setFileDirty(file.id, false)
+        })
+
+        editorState.setStatusMessage(`Saved inspector changes to: ${htmlRemotePath}`)
+        editorState.setError(null)
+      }
+
+      // 2. Save external stylesheets that were modified via the inspector.
+      // We serialize each same-origin stylesheet and write it to the
+      // corresponding remote path.
+      const styleSheets: (CSSStyleSheet | null)[] = Array.from(
+        iframeDoc.styleSheets || []
+      ) as (CSSStyleSheet | null)[]
+
+      const seenCssPaths = new Set<string>()
+
+      for (const sheet of styleSheets) {
+        if (!sheet) continue
+        const href = (sheet as CSSStyleSheet).href
+        if (!href) {
+          // Inline <style> blocks are captured in the HTML save above.
+          continue
+        }
+
+        const remotePath = await mapResourceUrlToRemotePath(href)
+        if (!remotePath || seenCssPaths.has(remotePath)) continue
+        seenCssPaths.add(remotePath)
+
+        let cssText = ''
+        let rules: CSSRuleList | undefined
+        try {
+          rules = (sheet as CSSStyleSheet).cssRules
+        } catch {
+          // Accessing cssRules can fail for some stylesheets; skip them.
+          continue
+        }
+        if (!rules) continue
+
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i]
+          if (rule && typeof (rule as CSSStyleRule).cssText === 'string') {
+            cssText += (rule as CSSStyleRule).cssText + '\n'
+          }
+        }
+
+        const cssRes = await electronAPI.localSaveFile(remotePath, cssText)
+        if (!cssRes.success) {
+          const msg = cssRes.error || `Failed to save stylesheet to sync folder: ${remotePath}`
+          editorState.setError(msg)
+          editorState.setStatusMessage(null)
+          return
+        }
+
+        // Update any open editor tabs for this CSS file.
+        const cssFiles = editorState.openFiles.filter(
+          (f) => f.kind !== 'preview' && f.path === remotePath
+        )
+        cssFiles.forEach((file) => {
+          editorState.updateFileContent(file.id, cssText)
+          editorState.setFileDirty(file.id, false)
+        })
+      }
+    } catch (err) {
+      console.error('Failed to save inspector changes:', err)
+      const editorState = useEditorStore.getState()
+      const msg = 'Failed to save inspector changes to local files'
+      editorState.setError(msg)
+      editorState.setStatusMessage(null)
+    }
+  }
+
   if (!url) {
     return (
       <div className="flex items-center justify-center h-full text-vscode-text-muted">
@@ -786,6 +957,7 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, isActive }) => {
           }}
           latestTextChange={latestTextChange}
           resetChangesToken={resetChangesToken}
+          onSaveChanges={handleSaveInspectorChanges}
         />
       )}
     </div>
@@ -820,7 +992,11 @@ const EditorArea: React.FC = () => {
                   file.id === activeFile && file.previewUrl ? 'block' : 'hidden'
                 }`}
               >
-                <BrowserPreview url={file.previewUrl || ''} isActive={file.id === activeFile} />
+                <BrowserPreview
+                  url={file.previewUrl || ''}
+                  sourcePath={file.path}
+                  isActive={file.id === activeFile}
+                />
               </div>
             ))}
           </>

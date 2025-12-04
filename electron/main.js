@@ -295,9 +295,9 @@ function setupIPC() {
     }
   })
 
-  ipcMain.handle('db-set-active-file', async (event, userId, filePath) => {
+  ipcMain.handle('db-set-active-file', async (event, userId, filePath, fileHash) => {
     try {
-      await databaseService.setActiveFile(userId, filePath)
+      await databaseService.setActiveFile(userId, filePath, null, fileHash ?? null)
       return { success: true }
     } catch (error) {
       return { success: false, error: error.message }
@@ -317,6 +317,24 @@ function setupIPC() {
     try {
       const user = await databaseService.getOrCreateDefaultUser()
       return { success: true, user }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings-get-db-config', async () => {
+    try {
+      const cfg = databaseService.getConfig()
+      return { success: true, config: cfg }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings-set-db-config', async (_event, cfg) => {
+    try {
+      const merged = databaseService.setConfig(cfg || {})
+      return { success: true, config: merged }
     } catch (error) {
       return { success: false, error: error.message }
     }

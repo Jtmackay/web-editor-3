@@ -2,10 +2,49 @@ import React from 'react'
 import { useEditorStore } from '../stores/editorStore'
 import { useFTPStore } from '../stores/ftpStore'
 import { FileText, Users, GitBranch } from 'lucide-react'
+import { electronAPI } from '../utils/electronAPI'
 
 const StatusBar: React.FC = () => {
-  const { activeFile, error, statusMessage } = useEditorStore()
+  const { activeFile, openFiles, currentUserId, error, statusMessage } = useEditorStore()
   const { isConnected, currentPath } = useFTPStore()
+  const [otherEditors, setOtherEditors] = React.useState<any[]>([])
+
+  const currentFile = React.useMemo(
+    () => openFiles.find((f) => f.id === activeFile) || null,
+    [openFiles, activeFile],
+  )
+
+  React.useEffect(() => {
+    let interval: number | undefined
+    const loadPresence = async () => {
+      if (!currentFile?.path || !currentUserId) {
+        setOtherEditors([])
+        return
+      }
+      const res = await electronAPI.dbGetActiveFiles()
+      if (!res.success || !res.files) {
+        setOtherEditors([])
+        return
+      }
+      const others = res.files.filter(
+        (f: any) => f.file_path === currentFile.path && f.user_id !== currentUserId,
+      )
+      setOtherEditors(others)
+    }
+
+    if (currentFile?.path && currentUserId) {
+      loadPresence()
+      interval = window.setInterval(loadPresence, 5000)
+    } else {
+      setOtherEditors([])
+    }
+
+    return () => {
+      if (interval) {
+        window.clearInterval(interval)
+      }
+    }
+  }, [currentFile?.path, currentUserId])
 
   return (
     <div className="h-6 bg-vscode-statusBar border-t border-vscode-border flex items-center justify-between px-4 text-xs">
@@ -30,6 +69,15 @@ const StatusBar: React.FC = () => {
       </div>
       
       <div className="flex items-center gap-4">
+        {currentFile && otherEditors.length > 0 && (
+          <div className="flex items-center gap-1 text-vscode-text-muted">
+            <Users size={12} />
+            <span className="truncate" title={otherEditors.map((u: any) => u.username).join(', ')}>
+              Also editing: {otherEditors.map((u: any) => u.username).join(', ')}
+            </span>
+          </div>
+        )}
+
         {(error || statusMessage) && (
           <div className="max-w-xs truncate" title={error || statusMessage || undefined}>
             <span className={error ? 'text-red-400' : 'text-green-400'}>

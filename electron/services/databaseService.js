@@ -8,24 +8,60 @@ class DatabaseService {
     this.currentUser = null
   }
 
+  getConfig() {
+    return this.store.get('database', {
+      host: 'localhost',
+      port: 5432,
+      database: 'vscode_editor',
+      user: 'postgres',
+      password: 'postgres'
+    })
+  }
+
+  setConfig(nextConfig) {
+    const current = this.getConfig()
+    const merged = {
+      ...current,
+      ...nextConfig,
+    }
+    this.store.set('database', merged)
+    return merged
+  }
+
   async initialize(config = null) {
     try {
-      // Use provided config or get from store
-      const dbConfig = config || this.store.get('database', {
-        host: 'localhost',
-        port: 5432,
-        database: 'vscode_editor',
-        user: 'postgres',
-        password: 'postgres'
-      })
+      // Prefer a DATABASE_URL/NEON_DATABASE_URL when available (e.g. Neon.tech),
+      // otherwise fall back to the stored per-machine config.
+      const envConnectionString = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || null
 
-      this.pool = new Pool({
-        ...dbConfig,
-        ssl: false, // Disable SSL for local development
-        max: 20, // Maximum number of clients in the pool
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-      })
+      if (envConnectionString && !config) {
+        // Hosted Postgres (Neon, etc.) – always use SSL.
+        this.pool = new Pool({
+          connectionString: envConnectionString,
+          ssl: { rejectUnauthorized: false },
+          max: 20,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 2000
+        })
+      } else {
+        // Use provided config or get from store
+        const dbConfig = config || this.getConfig()
+
+        // If ssl is explicitly set in config, respect it.
+        // Otherwise, default to SSL for non-local hosts.
+        const shouldUseSSL =
+          typeof dbConfig.ssl === 'boolean'
+            ? dbConfig.ssl
+            : dbConfig.host && !['localhost', '127.0.0.1'].includes(dbConfig.host)
+
+        this.pool = new Pool({
+          ...dbConfig,
+          ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
+          max: 20, // Maximum number of clients in the pool
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 2000
+        })
+      }
 
       // Test connection
       await this.pool.query('SELECT NOW()')

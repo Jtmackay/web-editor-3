@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbGetUsers: () => ipcRenderer.invoke('db-get-users'),
   dbUpdateUserStatus: (userId, status) => ipcRenderer.invoke('db-update-user-status', userId, status),
   dbGetActiveFiles: () => ipcRenderer.invoke('db-get-active-files'),
-  dbSetActiveFile: (userId, filePath) => ipcRenderer.invoke('db-set-active-file', userId, filePath),
+  dbSetActiveFile: (userId, filePath, fileHash) =>
+    ipcRenderer.invoke('db-set-active-file', userId, filePath, fileHash ?? null),
   dbRemoveActiveFile: (userId, filePath) => ipcRenderer.invoke('db-remove-active-file', userId, filePath),
   dbGetOrCreateDefaultUser: () => ipcRenderer.invoke('db-get-or-create-default-user'),
   dbGetFTPConnections: (userId) => ipcRenderer.invoke('db-get-ftp-connections', userId),
@@ -42,6 +43,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localSaveFile: (remotePath, content) => ipcRenderer.invoke('local-save-file', remotePath, content),
 
   openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
+
+  settingsGetDbConfig: () => ipcRenderer.invoke('settings-get-db-config'),
+  settingsSetDbConfig: (config) => ipcRenderer.invoke('settings-set-db-config', config),
 
   onMenuEvent: (callback) => {
     const events = [

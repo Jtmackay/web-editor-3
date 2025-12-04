@@ -3,13 +3,49 @@ const Store = require('electron-store')
 
 class DatabaseService {
   constructor() { this.pool = null; this.store = new Store({ name: 'database-config' }); this.currentUser = null }
+  getConfig() {
+    return this.store.get('database', {
+      host: 'localhost',
+      port: 5432,
+      database: 'vscode_editor',
+      user: 'postgres',
+      password: 'postgres'
+    })
+  }
+  setConfig(nextConfig) {
+    const current = this.getConfig()
+    const merged = { ...current, ...nextConfig }
+    this.store.set('database', merged)
+    return merged
+  }
   getEncryptionKey() { let key = this.store.get('encryptionKey'); if (!key) { const crypto = require('crypto'); key = crypto.randomBytes(32).toString('base64'); this.store.set('encryptionKey', key) } return Buffer.from(key, 'base64') }
   encrypt(text) { const crypto = require('crypto'); const key = this.getEncryptionKey(); const iv = crypto.randomBytes(12); const cipher = crypto.createCipheriv('aes-256-gcm', key, iv); const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]); const tag = cipher.getAuthTag(); return JSON.stringify({ iv: iv.toString('base64'), tag: tag.toString('base64'), data: enc.toString('base64') }) }
   decrypt(payload) { const crypto = require('crypto'); const key = this.getEncryptionKey(); const obj = JSON.parse(payload); const iv = Buffer.from(obj.iv, 'base64'); const tag = Buffer.from(obj.tag, 'base64'); const data = Buffer.from(obj.data, 'base64'); const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv); decipher.setAuthTag(tag); const dec = Buffer.concat([decipher.update(data), decipher.final()]); return dec.toString('utf8') }
   async initialize(config = null) {
     try {
-      const dbConfig = config || this.store.get('database', { host: 'localhost', port: 5432, database: 'vscode_editor', user: 'postgres', password: 'postgres' })
-      this.pool = new Pool({ ...dbConfig, ssl: false, max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 2000 })
+      const envConnectionString = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || null
+      if (envConnectionString && !config) {
+        this.pool = new Pool({
+          connectionString: envConnectionString,
+          ssl: { rejectUnauthorized: false },
+          max: 20,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 2000
+        })
+      } else {
+        const dbConfig = config || this.getConfig()
+        const shouldUseSSL =
+          typeof dbConfig.ssl === 'boolean'
+            ? dbConfig.ssl
+            : dbConfig.host && !['localhost', '127.0.0.1'].includes(dbConfig.host)
+        this.pool = new Pool({
+          ...dbConfig,
+          ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
+          max: 20,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 2000
+        })
+      }
       await this.pool.query('SELECT NOW()')
       await this.initializeSchema()
       return true

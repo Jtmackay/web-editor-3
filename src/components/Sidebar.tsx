@@ -131,11 +131,13 @@ const Sidebar: React.FC = () => {
         )}
         
         {activeTab === 'settings' && (
-          <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-vscode-border">
+          <div className="flex flex-col h-full min-h-0">
+            <div className="p-3 border-b border-vscode-border flex-shrink-0">
               <h3 className="text-sm font-semibold text-vscode-text">Settings</h3>
             </div>
-            <SettingsPanel />
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <SettingsPanel />
+            </div>
           </div>
         )}
       </div>
@@ -160,6 +162,11 @@ const SettingsPanel: React.FC = () => {
   const [hideIgnoredInExplorer, setHideIgnoredInExplorer] = useState(false)
   const [hiddenIgnorePatterns, setHiddenIgnorePatterns] = useState<string[]>([])
   const [newIgnorePattern, setNewIgnorePattern] = useState('')
+  const [dbHost, setDbHost] = useState('')
+  const [dbPort, setDbPort] = useState<number | string>('')
+  const [dbName, setDbName] = useState('')
+  const [dbUser, setDbUser] = useState('')
+  const [dbPassword, setDbPassword] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -167,11 +174,12 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const [syncRes, baseUrlRes, startAfterRes, ignoreRes] = await Promise.all([
+        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes] = await Promise.all([
           electronAPI.settingsGetSyncFolder(),
           electronAPI.settingsGetPreviewBaseUrl(),
           electronAPI.settingsGetPreviewStartAfter(),
-          electronAPI.settingsGetSyncIgnore()
+          electronAPI.settingsGetSyncIgnore(),
+          electronAPI.settingsGetDbConfig()
         ])
         if (mounted && syncRes.success && typeof syncRes.path === 'string') {
           setSyncFolder(syncRes.path)
@@ -192,6 +200,13 @@ const SettingsPanel: React.FC = () => {
           if (Array.isArray(ignoreRes.hiddenPaths)) {
             setHiddenIgnorePatterns(ignoreRes.hiddenPaths)
           }
+        }
+        if (mounted && dbRes.success && dbRes.config) {
+          setDbHost(dbRes.config.host || '')
+          setDbPort(dbRes.config.port ?? '')
+          setDbName(dbRes.config.database || '')
+          setDbUser(dbRes.config.user || '')
+          setDbPassword(dbRes.config.password || '')
         }
       } catch (err) {
         console.error('Failed to load sync folder', err)
@@ -241,10 +256,17 @@ const SettingsPanel: React.FC = () => {
     }
     setSaving(true)
     try {
-      const [syncRes, baseUrlRes, startAfterRes] = await Promise.all([
+      const [syncRes, baseUrlRes, startAfterRes, dbRes] = await Promise.all([
         electronAPI.settingsSetSyncFolder(syncFolder.trim()),
         electronAPI.settingsSetPreviewBaseUrl(previewBaseUrl.trim()),
-        electronAPI.settingsSetPreviewStartAfter(previewStartAfter.trim())
+        electronAPI.settingsSetPreviewStartAfter(previewStartAfter.trim()),
+        electronAPI.settingsSetDbConfig({
+          host: dbHost.trim() || 'localhost',
+          port: Number(dbPort) || 5432,
+          database: dbName.trim() || 'vscode_editor',
+          user: dbUser.trim() || 'postgres',
+          password: dbPassword
+        })
       ])
       if (!syncRes.success) {
         setError(syncRes.error || 'Failed to save sync folder')
@@ -252,6 +274,8 @@ const SettingsPanel: React.FC = () => {
         setError(baseUrlRes.error || 'Failed to save preview base URL')
       } else if (!startAfterRes.success) {
         setError(startAfterRes.error || 'Failed to save preview start-after path')
+      } else if (!dbRes.success) {
+        setError(dbRes.error || 'Failed to save database settings')
       } else {
         setStatus('Settings saved')
       }
@@ -311,6 +335,73 @@ const SettingsPanel: React.FC = () => {
             {status}
           </div>
         )}
+      </section>
+      <section>
+        <h4 className="font-semibold mb-1">Database (PostgreSQL)</h4>
+        <p className="text-vscode-text-muted mb-2">
+          Configure the database used for user presence and active file tracking. For a shared Neon
+          database, enter the host, port, database name, user, and password here.
+        </p>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="block text-xs mb-1">Host</label>
+              <input
+                type="text"
+                value={dbHost}
+                onChange={(e) => setDbHost(e.target.value)}
+                className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+                placeholder="e.g. localhost or your-neon-host"
+              />
+            </div>
+            <div className="w-24">
+              <label className="block text-xs mb-1">Port</label>
+              <input
+                type="number"
+                value={dbPort}
+                onChange={(e) => setDbPort(e.target.value)}
+                className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+                placeholder="5432"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="block text-xs mb-1">Database</label>
+              <input
+                type="text"
+                value={dbName}
+                onChange={(e) => setDbName(e.target.value)}
+                className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+                placeholder="vscode_editor"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs mb-1">User</label>
+              <input
+                type="text"
+                value={dbUser}
+                onChange={(e) => setDbUser(e.target.value)}
+                className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+                placeholder="postgres"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs mb-1">Password</label>
+            <input
+              type="password"
+              value={dbPassword}
+              onChange={(e) => setDbPassword(e.target.value)}
+              className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+              placeholder="Database password"
+            />
+          </div>
+          <p className="text-xs text-vscode-text-muted">
+            Changes take effect the next time the app starts. Values are stored locally on this
+            machine only.
+          </p>
+        </div>
       </section>
       <section>
         <h4 className="font-semibold mb-1">Ignored files & patterns</h4>

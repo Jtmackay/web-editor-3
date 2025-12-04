@@ -272,8 +272,15 @@ interface InspectPanelProps {
     path: string
     oldText: string
     newText: string
+    kind?: 'text' | 'html'
   } | null
   resetChangesToken?: number
+  /**
+   * Invoked when the user clicks the "Save to files" button in the Changes tab.
+   * The parent component is responsible for persisting the current DOM/CSS
+   * state back to the appropriate local files.
+   */
+  onSaveChanges?: () => void
 }
 
 const InspectPanel: React.FC<InspectPanelProps> = ({
@@ -289,7 +296,8 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   onUpdateRuleStyle,
   onToggleTextChange,
   latestTextChange: externalTextChange,
-  resetChangesToken
+  resetChangesToken,
+  onSaveChanges
 }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
@@ -1232,6 +1240,21 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
 
     return (
       <div className="p-2 h-full flex flex-col">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-gray-300">
+            {changes.length} change{changes.length !== 1 ? 's' : ''}
+          </span>
+          {onSaveChanges && (
+            <button
+              type="button"
+              className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-default"
+              onClick={() => onSaveChanges()}
+              disabled={changes.length === 0}
+            >
+              Save to files
+            </button>
+          )}
+        </div>
         <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs overflow-auto flex-1 space-y-1">
           {changes.map((change) => {
             const locationLabel =
@@ -1394,20 +1417,20 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                                 onUpdateRuleStyle(
                                   sheetIndex,
                                   ruleIndex,
-                                  change.property,
+                                  change.property || '',
                                   revertVal
                                 )
                                 if (change.oldValue) {
-                                  markChanged('rule', change.property)
+                                  markChanged('rule', change.property || '')
                                 }
                               } else if (change.newValue !== undefined && change.newValue !== null) {
                                 onUpdateRuleStyle(
                                   sheetIndex,
                                   ruleIndex,
-                                  change.property,
+                                  change.property || '',
                                   change.newValue
                                 )
-                                markChanged('rule', change.property)
+                                markChanged('rule', change.property || '')
                               }
                             }
                           }

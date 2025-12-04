@@ -20,7 +20,7 @@ declare global {
       dbGetUsers: () => Promise<{ success: boolean; users?: any[]; error?: string }>
       dbUpdateUserStatus: (userId: string, status: string) => Promise<{ success: boolean; error?: string }>
       dbGetActiveFiles: () => Promise<{ success: boolean; files?: any[]; error?: string }>
-      dbSetActiveFile: (userId: string, filePath: string) => Promise<{ success: boolean; error?: string }>
+      dbSetActiveFile: (userId: string, filePath: string, fileHash?: string | null) => Promise<{ success: boolean; error?: string }>
       dbRemoveActiveFile: (userId: string, filePath: string) => Promise<{ success: boolean; error?: string }>
       dbGetOrCreateDefaultUser: () => Promise<{ success: boolean; user?: any; error?: string }>
       dbGetFTPConnections: (userId: number) => Promise<{ success: boolean; connections?: any[]; error?: string }>
@@ -41,6 +41,9 @@ declare global {
       settingsGetPreviewStartAfter: () => Promise<{ success: boolean; startAfter?: string; error?: string }>
       settingsSetPreviewStartAfter: (startAfter: string) => Promise<{ success: boolean; startAfter?: string; error?: string }>
       openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
+
+      settingsGetDbConfig: () => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
+      settingsSetDbConfig: (config: { host: string; port: number; database: string; user: string; password: string }) => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
 
       localSaveFile: (remotePath: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>
 
@@ -91,7 +94,9 @@ export const electronAPI = {
   dbGetUsers: () => window.electronAPI?.dbGetUsers() || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbUpdateUserStatus: (userId: string, status: string) => window.electronAPI?.dbUpdateUserStatus(userId, status) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetActiveFiles: () => window.electronAPI?.dbGetActiveFiles() || Promise.resolve({ success: false, error: 'Electron API not available' }),
-  dbSetActiveFile: (userId: string, filePath: string) => window.electronAPI?.dbSetActiveFile(userId, filePath) || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  dbSetActiveFile: (userId: string, filePath: string, fileHash?: string | null) =>
+    window.electronAPI?.dbSetActiveFile(userId, filePath, fileHash ?? null) ||
+    Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbRemoveActiveFile: (userId: string, filePath: string) => window.electronAPI?.dbRemoveActiveFile(userId, filePath) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetOrCreateDefaultUser: () => window.electronAPI?.dbGetOrCreateDefaultUser() || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetFTPConnections: (userId: number) => window.electronAPI?.dbGetFTPConnections(userId) || Promise.resolve({ success: false, error: 'Electron API not available' }),
@@ -154,6 +159,24 @@ export const electronAPI = {
           error: 'Electron API not available'
         }),
   openExternalUrl: (url: string) => window.electronAPI?.openExternalUrl(url) || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  settingsGetDbConfig: () =>
+    window.electronAPI?.settingsGetDbConfig() ||
+    Promise.resolve({
+      success: false,
+      error: 'Electron API not available'
+    }),
+  settingsSetDbConfig: (config: {
+    host: string
+    port: number
+    database: string
+    user: string
+    password: string
+  }) =>
+    window.electronAPI?.settingsSetDbConfig(config) ||
+    Promise.resolve({
+      success: false,
+      error: 'Electron API not available'
+    }),
   localSaveFile: (remotePath: string, content: string) =>
     window.electronAPI?.localSaveFile(remotePath, content) ||
     Promise.resolve({ success: false, error: 'Electron API not available' }),

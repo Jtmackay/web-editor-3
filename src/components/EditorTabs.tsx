@@ -94,6 +94,25 @@ const EditorTabs: React.FC = () => {
     editor.setActiveFile(previewId)
   }
 
+  const computeContentHash = async (content: string): Promise<string> => {
+    try {
+      const encoder = new TextEncoder()
+      const data = encoder.encode(content)
+      const digest = await window.crypto.subtle.digest('SHA-256', data)
+      const bytes = Array.from(new Uint8Array(digest))
+      return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+    } catch {
+      // Fallback: simple, non-cryptographic hash
+      let hash = 0
+      for (let i = 0; i < content.length; i++) {
+        const chr = content.charCodeAt(i)
+        hash = (hash << 5) - hash + chr
+        hash |= 0
+      }
+      return hash.toString(16)
+    }
+  }
+
   const handleSaveFile = async (file: EditorFile) => {
     if (file.kind === 'preview') return
     const res = await electronAPI.localSaveFile(file.path, file.content)
@@ -112,6 +131,54 @@ const EditorTabs: React.FC = () => {
   const handleSaveAndSync = async (file: EditorFile) => {
     if (file.kind === 'preview') return
     const store = useEditorStore.getState()
+
+    const uid = store.currentUserId
+    let newHash: string | null = null
+
+    if (uid) {
+      // Compute the hash we are about to save and check for potential conflicts.
+      newHash = await computeContentHash(file.content)
+      const activeRes = await electronAPI.dbGetActiveFiles()
+      if (activeRes.success && activeRes.files) {
+        const now = Date.now()
+        const others = activeRes.files.filter(
+          (f: any) => f.file_path === file.path && f.user_id !== uid,
+        )
+        const conflictingUsers: string[] = []
+        for (const other of others) {
+          const otherHash: string | null = other.file_hash || null
+          const lastModifiedMs = other.last_modified
+            ? new Date(other.last_modified as string).getTime()
+            : 0
+          const activeRecently = lastModifiedMs > now - 10 * 60 * 1000 // last 10 minutes
+
+          if (!activeRecently) continue
+
+          if (otherHash && newHash && otherHash !== newHash) {
+            conflictingUsers.push(other.username || `User #${other.user_id}`)
+          } else if (!otherHash) {
+            // We know someone else has the file open and was active recently,
+            // but we don't know their content; still worth a warning.
+            conflictingUsers.push(other.username || `User #${other.user_id}`)
+          }
+        }
+
+        if (conflictingUsers.length > 0) {
+          const proceed = window.confirm(
+            `Warning: ${conflictingUsers.join(
+              ', ',
+            )} also ha${conflictingUsers.length === 1 ? 's' : 've'
+            } recent changes on this file.\n\n` +
+              'Saving now may overwrite their edits.\n\n' +
+              'Do you want to continue and upload your version?',
+          )
+          if (!proceed) {
+            return
+          }
+        }
+      }
+    }
+
     const localRes = await electronAPI.localSaveFile(file.path, file.content)
     if (!localRes.success || !localRes.path) {
       store.setError(localRes.error || 'Failed to save file to sync folder')
@@ -123,6 +190,14 @@ const EditorTabs: React.FC = () => {
       store.setFileDirty(file.id, false)
       store.setStatusMessage(`Saved and synced to server: ${file.path}`)
       store.setError(null)
+      if (uid) {
+        try {
+          const hashToStore = newHash ?? (await computeContentHash(file.content))
+          await electronAPI.dbSetActiveFile(String(uid), file.path, hashToStore)
+        } catch {
+          // Presence/hash updates are best-effort; ignore errors here.
+        }
+      }
     } else {
       store.setError(ftpRes.error || 'File saved locally, but failed to sync to server')
       store.setStatusMessage(null)
@@ -143,7 +218,20 @@ const EditorTabs: React.FC = () => {
               ? 'bg-vscode-bg text-vscode-text'
               : 'bg-vscode-sidebar text-vscode-text-muted hover:bg-vscode-hover'
           }`}
-          onClick={() => setActiveFile(file.id)}
+          onClick={async () => {
+            setActiveFile(file.id)
+            if (!file.kind || file.kind === 'code') {
+              const uid = useEditorStore.getState().currentUserId
+              if (uid) {
+                try {
+                  const hash = await computeContentHash(file.content)
+                  await electronAPI.dbSetActiveFile(String(uid), file.path, hash)
+                } catch {
+                  // Presence updates are best-effort.
+                }
+              }
+            }
+          }}
           onContextMenu={(e) => {
             e.preventDefault()
             setContextMenu({ x: e.clientX, y: e.clientY, file })

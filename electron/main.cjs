@@ -237,8 +237,8 @@ function setupIPC() {
   ipcMain.handle('db-get-active-files', async () => {
     try { const files = await databaseService.getActiveFiles(); return { success: true, files } } catch (error) { return { success: false, error: error.message } }
   })
-  ipcMain.handle('db-set-active-file', async (event, userId, filePath) => {
-    try { await databaseService.setActiveFile(userId, filePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
+  ipcMain.handle('db-set-active-file', async (event, userId, filePath, fileHash) => {
+    try { await databaseService.setActiveFile(userId, filePath, null, fileHash ?? null); return { success: true } } catch (error) { return { success: false, error: error.message } }
   })
   ipcMain.handle('db-remove-active-file', async (event, userId, filePath) => {
     try { await databaseService.removeActiveFile(userId, filePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
@@ -371,6 +371,24 @@ function setupIPC() {
       const folderPath = result.filePaths[0]
       settingsService.setSyncFolder(folderPath)
       return { success: true, path: folderPath }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings-get-db-config', async () => {
+    try {
+      const cfg = databaseService.getConfig()
+      return { success: true, config: cfg }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings-set-db-config', async (_event, cfg) => {
+    try {
+      const merged = databaseService.setConfig(cfg || {})
+      return { success: true, config: merged }
     } catch (error) {
       return { success: false, error: error.message }
     }
