@@ -120,6 +120,48 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
               return styles;
             }
 
+            function getMatchedRules(element) {
+              const results = [];
+              const styleSheets = document.styleSheets || [];
+              for (let i = 0; i < styleSheets.length; i++) {
+                const sheet = styleSheets[i];
+                if (!sheet) continue;
+                let rules;
+                try {
+                  rules = sheet.cssRules || sheet.rules;
+                } catch (e) {
+                  // Some stylesheets (e.g. cross-origin) may not be accessible
+                  continue;
+                }
+                if (!rules) continue;
+                for (let j = 0; j < rules.length; j++) {
+                  const rule = rules[j];
+                  if (!rule || rule.type !== 1 || !rule.selectorText) continue;
+                  try {
+                    if (!element.matches(rule.selectorText)) continue;
+                  } catch (e) {
+                    continue;
+                  }
+                  const decls = {};
+                  const styleDecl = rule.style;
+                  if (styleDecl && styleDecl.length) {
+                    for (let k = 0; k < styleDecl.length; k++) {
+                      const prop = styleDecl[k];
+                      decls[prop] = styleDecl.getPropertyValue(prop);
+                    }
+                  }
+                  results.push({
+                    selector: rule.selectorText,
+                    source: sheet.href || (sheet.ownerNode && sheet.ownerNode.tagName === 'STYLE' ? '<style>' : ''),
+                    style: decls,
+                    sheetIndex: i,
+                    ruleIndex: j
+                  });
+                }
+              }
+              return results;
+            }
+
             function getElementInfo(element) {
               return {
                 tagName: element.tagName,
@@ -129,7 +171,8 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
                 domTree: buildDOMTree(document.body),
                 styles: {
                   computed: getComputedStylesObj(element),
-                  inline: getInlineStyles(element)
+                  inline: getInlineStyles(element),
+                  rules: getMatchedRules(element)
                 }
               };
             }
@@ -294,6 +337,28 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
             style={{ top: contextMenu.y, left: contextMenu.x }}
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              className="block w-full text-left px-3 py-2 hover:bg-vscode-hover border-b border-vscode-border"
+              onClick={() => {
+                setContextMenu(null)
+                const iframe = iframeRef.current
+                if (iframe) {
+                  try {
+                    const win = iframe.contentWindow
+                    if (win && typeof win.location.reload === 'function') {
+                      win.location.reload()
+                    } else {
+                      // Fallback: force src reset
+                      iframe.src = iframe.src
+                    }
+                  } catch {
+                    iframe.src = iframe.src
+                  }
+                }
+              }}
+            >
+              Refresh
+            </button>
             <button
               className="block w-full text-left px-3 py-2 hover:bg-vscode-hover"
               onClick={() => {
