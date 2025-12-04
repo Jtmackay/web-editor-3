@@ -8,6 +8,7 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [showInspect, setShowInspect] = useState(false)
   const [selectedElement, setSelectedElement] = useState<any>(null)
+  const [pendingElement, setPendingElement] = useState<any>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [inspectPanelWidth, setInspectPanelWidth] = useState(450)
 
@@ -143,6 +144,23 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
                 mouseY: e.clientY
               }, '*');
             }, true);
+
+            // Allow the parent window to request inspection of a specific element
+            // by its path (as used in the DOM tree).
+            window.addEventListener('message', function(e) {
+              try {
+                if (!e.data || e.data.type !== 'inspectByPath' || !e.data.path) return;
+                var el = document.querySelector(e.data.path);
+                if (!el) return;
+                var elementInfo = getElementInfo(el);
+                window.parent.postMessage({
+                  type: 'inspectElementByPath',
+                  data: elementInfo
+                }, '*');
+              } catch (err) {
+                console.error('inspectByPath failed', err);
+              }
+            });
           })();
         `
         
@@ -160,12 +178,20 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
     iframe.addEventListener('load', injectInspectionScript)
 
     const handleMessage = (event: MessageEvent) => {
+      if (!event.data || typeof event.data.type !== 'string') return
+
       if (event.data.type === 'inspectElement') {
-        // Store which element was right-clicked and where the context menu should appear.
-        // Only open the Inspect panel when the user explicitly clicks "Inspect"
-        // in the custom context menu (to better match Chrome's behavior).
-        setSelectedElement(event.data.data)
+        // Remember which element was right-clicked and where the context menu should appear.
+        // We only update the active inspected element when the user explicitly clicks "Inspect"
+        // so the Elements panel doesn't jump just on right-click.
+        setPendingElement(event.data.data)
         setContextMenu({ x: event.data.mouseX, y: event.data.mouseY })
+      } else if (event.data.type === 'inspectElementByPath') {
+        // When the iframe sends an inspect-by-path response (from clicking a node
+        // in the Elements tree), immediately update the selected element and ensure
+        // the inspect panel is visible.
+        setSelectedElement(event.data.data)
+        setShowInspect(true)
       }
     }
 
@@ -186,20 +212,57 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
   const handleSelectElement = (path: string) => {
     const iframe = iframeRef.current
     if (!iframe) return
-    
+
     try {
       const iframeWin = iframe.contentWindow
       if (!iframeWin) return
-      
+
+      iframeWin.postMessage(
+        {
+          type: 'inspectByPath',
+          path
+        },
+        '*'
+      )
+    } catch (err) {
+      console.error('Failed to request inspect by path:', err)
+    }
+  }
+
+  const handleUpdateInlineStyle = (property: string, value: string) => {
+    const iframe = iframeRef.current
+    if (!iframe || !selectedElement?.path) return
+
+    try {
+      const iframeWin = iframe.contentWindow
+      if (!iframeWin) return
+
       const iframeDoc = iframeWin.document
       if (!iframeDoc) return
-      
-      const element = iframeDoc.querySelector(path)
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+      const element = iframeDoc.querySelector(selectedElement.path)
+      if (element && (element as HTMLElement).style) {
+        ;(element as HTMLElement).style.setProperty(property, value)
       }
+
+      // Update the selectedElement state so the panel reflects the change
+      setSelectedElement((prev: any) => {
+        if (!prev) return prev
+        const prevStyles = prev.styles || {}
+        const prevInline = prevStyles.inline || {}
+        return {
+          ...prev,
+          styles: {
+            ...prevStyles,
+            inline: {
+              ...prevInline,
+              [property]: value
+            }
+          }
+        }
+      })
     } catch (err) {
-      console.error('Failed to select element:', err)
+      console.error('Failed to update inline style:', err)
     }
   }
 
@@ -235,6 +298,11 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
               className="block w-full text-left px-3 py-2 hover:bg-vscode-hover"
               onClick={() => {
                 setContextMenu(null)
+                // When the user chooses "Inspect", promote the last right-clicked element
+                // to be the actively inspected element and show the panel.
+                if (pendingElement) {
+                  setSelectedElement(pendingElement)
+                }
                 setShowInspect(true)
               }}
             >
@@ -261,6 +329,8 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
           onSelectElement={handleSelectElement}
           width={inspectPanelWidth}
           onWidthChange={setInspectPanelWidth}
+          onUpdateInlineStyle={handleUpdateInlineStyle}
+          onAddInlineStyle={handleUpdateInlineStyle}
         />
       )}
     </div>

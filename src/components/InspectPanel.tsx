@@ -16,16 +16,28 @@ interface InspectPanelProps {
   onSelectElement: (path: string) => void
   width: number
   onWidthChange: (width: number) => void
+  onUpdateInlineStyle: (property: string, value: string) => void
+  onAddInlineStyle: (property: string, value: string) => void
 }
 
-const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, onSelectElement, width, onWidthChange }) => {
+const InspectPanel: React.FC<InspectPanelProps> = ({
+  selectedElement,
+  onClose,
+  onSelectElement,
+  width,
+  onWidthChange,
+  onUpdateInlineStyle,
+  onAddInlineStyle
+}) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
-  const [splitPosition, setSplitPosition] = useState(60) // percentage
   const [isDraggingWidth, setIsDraggingWidth] = useState(false)
   const [isDraggingSplit, setIsDraggingSplit] = useState(false)
+  const [stylesHeight, setStylesHeight] = useState(180)
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedElementRef = useRef<HTMLDivElement>(null)
+  const domTreeContainerRef = useRef<HTMLDivElement>(null)
+  const stylesContainerRef = useRef<HTMLDivElement>(null)
   const widthDragStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   useEffect(() => {
@@ -52,18 +64,31 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
     setExpandedNodes(newExpanded)
 
     const scrollToSelected = () => {
-      if (!panelRef.current) return
+      const container = domTreeContainerRef.current
+      if (container) {
+        // Find the corresponding row inside the DOM tree scroll container
+        const target = container.querySelector(
+          `[data-dom-path="${path}"]`
+        ) as HTMLElement | null
 
-      // Prefer querying by data attribute so we always find the right row,
-      // even if the ref isn't attached yet for some reason.
-      const target = panelRef.current.querySelector(
-        `[data-dom-path="${path}"]`
-      ) as HTMLElement | null
+        if (target) {
+          const containerRect = container.getBoundingClientRect()
+          const targetRect = target.getBoundingClientRect()
+          const offset = targetRect.top - containerRect.top
 
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      } else if (selectedElementRef.current) {
-        selectedElementRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Scroll the DOM tree container so the target row is centered,
+          // without scrolling the entire app window.
+          const desiredScrollTop = container.scrollTop + offset - containerRect.height / 2
+          container.scrollTo({
+            top: Math.max(desiredScrollTop, 0),
+            behavior: 'smooth'
+          })
+        }
+      }
+
+      // Also reset the styles panel scroll to the top for the newly selected element
+      if (stylesContainerRef.current) {
+        stylesContainerRef.current.scrollTo({ top: 0 })
       }
     }
 
@@ -109,18 +134,23 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
     }
   }, [isDraggingWidth, onWidthChange])
 
-  // Handle split position dragging
+  // Handle split (elements/styles) height dragging
   useEffect(() => {
     if (!isDraggingSplit || !panelRef.current) return
 
     const handleMouseMove = (e: MouseEvent) => {
       e.preventDefault()
       const rect = panelRef.current!.getBoundingClientRect()
-      const y = e.clientY - rect.top
-      const percentage = (y / rect.height) * 100
-      if (percentage >= 20 && percentage <= 80) {
-        setSplitPosition(percentage)
-      }
+      const totalHeight = rect.height
+      const footerHeight = selectedElement ? 28 : 0
+
+      let newHeight = rect.bottom - e.clientY - footerHeight
+      const minHeight = 120
+      const maxHeight = Math.max(minHeight, totalHeight - HEADER_HEIGHT - minHeight - footerHeight)
+
+      if (newHeight < minHeight) newHeight = minHeight
+      if (newHeight > maxHeight) newHeight = maxHeight
+      setStylesHeight(newHeight)
     }
 
     const handleMouseUp = () => {
@@ -134,7 +164,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [isDraggingSplit])
+  }, [isDraggingSplit, selectedElement])
 
   const toggleNode = (path: string) => {
     const newExpanded = new Set(expandedNodes)
@@ -238,22 +268,73 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
     const inlineStyles = selectedElement.styles.inline || {}
 
     return (
-      <div className="p-2 overflow-auto h-full">
+      <div className="p-2">
         {Object.keys(inlineStyles).length > 0 && (
           <div className="mb-4">
             <div className="text-xs font-semibold text-gray-300 mb-2">element.style</div>
-            <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs">
+            <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs space-y-1">
               {Object.entries(inlineStyles).map(([key, value]) => (
-                <div key={key} className="mb-1">
-                  <span className="text-[#9cdcfe]">{key}</span>
-                  <span className="text-gray-400">: </span>
-                  <span className="text-[#ce9178]">{String(value)}</span>
+                <div key={key} className="flex items-center gap-2">
+                  <span className="text-[#9cdcfe] w-32 flex-shrink-0">{key}</span>
+                  <span className="text-gray-400">:</span>
+                  <input
+                    className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] text-xs px-1"
+                    defaultValue={String(value)}
+                    onBlur={(e) => {
+                      const newValue = e.target.value
+                      if (newValue !== String(value)) {
+                        onUpdateInlineStyle(key, newValue)
+                      }
+                    }}
+                  />
                   <span className="text-gray-400">;</span>
                 </div>
               ))}
             </div>
           </div>
         )}
+
+        {/* Add new inline style */}
+        <div className="mb-4">
+          <div className="text-xs font-semibold text-gray-300 mb-2">Add property</div>
+          <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs flex items-center gap-2">
+            <input
+              className="w-40 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#9cdcfe] px-1"
+              placeholder="property"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const prop = (e.currentTarget as HTMLInputElement).value.trim()
+                  const valueInput = (e.currentTarget.nextSibling as HTMLInputElement | null)
+                  const val = valueInput?.value.trim() || ''
+                  if (prop && val) {
+                    onAddInlineStyle(prop, val)
+                    ;(e.currentTarget as HTMLInputElement).value = ''
+                    if (valueInput) valueInput.value = ''
+                  }
+                }
+              }}
+            />
+            <span className="text-gray-400">:</span>
+            <input
+              className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] px-1"
+              placeholder="value"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const valueInput = e.currentTarget as HTMLInputElement
+                  const propInput = valueInput.previousSibling as HTMLInputElement | null
+                  const prop = propInput?.value.trim() || ''
+                  const val = valueInput.value.trim()
+                  if (prop && val) {
+                    onAddInlineStyle(prop, val)
+                    valueInput.value = ''
+                    if (propInput) propInput.value = ''
+                  }
+                }
+              }}
+            />
+            <span className="text-gray-400">;</span>
+          </div>
+        </div>
 
         <div>
           <div className="text-xs font-semibold text-gray-300 mb-2">Computed Styles</div>
@@ -273,11 +354,19 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
     )
   }
 
+  // Fixed heights (in pixels) for layout calculations.
+  const HEADER_HEIGHT = 32
+  const FOOTER_HEIGHT = selectedElement ? 28 : 0
+
   return (
     <div 
       ref={panelRef}
-      className="flex flex-col h-full bg-[#252526] text-gray-300 border-l border-gray-700 relative"
-      style={{ width: `${width}px`, userSelect: isDraggingWidth || isDraggingSplit ? 'none' : 'auto' }}
+      className="h-full bg-[#252526] text-gray-300 border-l border-gray-700 relative"
+      style={{
+        width: `${width}px`,
+        userSelect: isDraggingWidth ? 'none' : 'auto',
+        overflow: 'hidden'
+      }}
     >
       {/* Width resize handle */}
       <div
@@ -290,8 +379,11 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
         }}
       />
 
-      {/* Header */}
-      <div className="flex items-center justify-between bg-[#2d2d30] px-3 py-2 border-b border-gray-700">
+      {/* Header (fixed at top) */}
+      <div
+        className="absolute left-0 right-0 flex items-center justify-between bg-[#2d2d30] px-3 border-b border-gray-700"
+        style={{ top: 0, height: HEADER_HEIGHT }}
+      >
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold">Elements</span>
           <button
@@ -304,8 +396,14 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
         </div>
       </div>
 
-      {/* Elements section */}
-      <div className="overflow-auto" style={{ height: `${splitPosition}%` }}>
+      {/* Elements section: positioned between header and styles/footer, scrolls internally */}
+      <div
+        className="absolute left-0 right-0 border-b border-gray-700 bg-[#252526] flex flex-col"
+        style={{
+          top: HEADER_HEIGHT,
+          bottom: stylesHeight + FOOTER_HEIGHT
+        }}
+      >
         {/* Search bar */}
         <div className="p-2 border-b border-gray-700">
           <div className="flex items-center bg-[#1e1e1e] rounded px-2 py-1">
@@ -320,8 +418,12 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
           </div>
         </div>
 
-        {/* DOM Tree */}
-        <div className="overflow-auto">
+        {/* DOM Tree scroll area */}
+        <div
+          ref={domTreeContainerRef}
+          className="overflow-auto"
+          style={{ flex: 1, minHeight: 0 }}
+        >
           {selectedElement?.domTree ? (
             renderNode(selectedElement.domTree)
           ) : (
@@ -332,26 +434,39 @@ const InspectPanel: React.FC<InspectPanelProps> = ({ selectedElement, onClose, o
         </div>
       </div>
 
-      {/* Split handle */}
+      {/* Styles section: adjustable band above footer, scrolls independently */}
       <div
-        className="h-1 bg-[#2d2d30] cursor-ns-resize hover:bg-blue-500 flex items-center justify-center"
-        onMouseDown={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setIsDraggingSplit(true)
+        className="absolute left-0 right-0 bg-[#252526] border-t border-gray-700 flex flex-col"
+        style={{
+          height: stylesHeight,
+          bottom: FOOTER_HEIGHT
         }}
       >
-        <div className="w-12 h-0.5 bg-gray-600 rounded"></div>
+        <div
+          className="flex items-center justify-between px-3 py-1 border-b border-gray-700 bg-[#2d2d30] cursor-ns-resize"
+          onMouseDown={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingSplit(true)
+          }}
+        >
+          <span className="text-xs font-semibold text-gray-200">Styles</span>
+        </div>
+        <div
+          ref={stylesContainerRef}
+          className="overflow-auto"
+          style={{ flex: 1, minHeight: 0 }}
+        >
+          {renderStyles()}
+        </div>
       </div>
 
-      {/* Styles section */}
-      <div className="flex-1 overflow-auto">
-        {renderStyles()}
-      </div>
-
-      {/* Selected element info footer */}
+      {/* Selected element info footer: fixed at bottom */}
       {selectedElement && (
-        <div className="bg-[#2d2d30] border-t border-gray-700 px-3 py-1">
+        <div
+          className="absolute left-0 right-0 bg-[#2d2d30] border-t border-gray-700 px-3 py-1"
+          style={{ bottom: 0, height: FOOTER_HEIGHT }}
+        >
           <div className="text-xs font-mono">
             <span className="text-[#569cd6]">&lt;{selectedElement.tagName?.toLowerCase() || 'unknown'}&gt;</span>
             {selectedElement.id && <span className="text-[#9cdcfe]">#{selectedElement.id}</span>}
