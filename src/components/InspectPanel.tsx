@@ -22,6 +22,103 @@ const ENUM_STYLE_OPTIONS: Record<string, string[]> = {
   'align-content': ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'stretch']
 }
 
+// Suggestions for property/value autocomplete in add rows
+const CSS_PROPERTY_SUGGESTIONS: string[] = [
+  'color',
+  'background',
+  'background-color',
+  'border',
+  'border-color',
+  'border-radius',
+  'border-width',
+  'border-style',
+  'margin',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'padding',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'display',
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'width',
+  'height',
+  'max-width',
+  'max-height',
+  'min-width',
+  'min-height',
+  'font-size',
+  'font-family',
+  'font-weight',
+  'line-height',
+  'text-align',
+  'z-index',
+  'flex',
+  'flex-direction',
+  'flex-wrap',
+  'justify-content',
+  'align-items',
+  'align-content',
+  'gap',
+  'row-gap',
+  'column-gap',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'opacity',
+  'box-shadow'
+]
+
+const CSS_VALUE_SUGGESTIONS: string[] = [
+  'block',
+  'inline',
+  'inline-block',
+  'flex',
+  'grid',
+  'none',
+  'static',
+  'relative',
+  'absolute',
+  'fixed',
+  'sticky',
+  'center',
+  'flex-start',
+  'flex-end',
+  'space-between',
+  'space-around',
+  'space-evenly',
+  'baseline',
+  'bold',
+  'normal',
+  'bolder',
+  'lighter',
+  '1',
+  '0',
+  '1px',
+  '2px',
+  '4px',
+  '8px',
+  '16px',
+  '50%',
+  '100%',
+  'auto',
+  'hidden',
+  'scroll',
+  'visible',
+  'rgba(0, 0, 0, 0.5)',
+  '#000000',
+  '#ffffff'
+]
+
+// (duplicate CSS_PROPERTY_SUGGESTIONS and CSS_VALUE_SUGGESTIONS removed)
+
 const getEnumOptions = (prop: string): string[] | undefined => {
   return ENUM_STYLE_OPTIONS[prop.toLowerCase()]
 }
@@ -155,6 +252,14 @@ interface InspectPanelProps {
   onWidthChange: (width: number) => void
   onUpdateInlineStyle: (property: string, value: string) => void
   onAddInlineStyle: (property: string, value: string) => void
+  onRemoveInlineStyle: (property: string) => void
+  onReorderInlineStyles: (orderedKeys: string[]) => void
+  onUpdateRuleStyle: (
+    sheetIndex: number,
+    ruleIndex: number,
+    property: string,
+    value: string
+  ) => void
 }
 
 const InspectPanel: React.FC<InspectPanelProps> = ({
@@ -164,20 +269,43 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   width,
   onWidthChange,
   onUpdateInlineStyle,
-  onAddInlineStyle
+  onAddInlineStyle,
+  onRemoveInlineStyle,
+  onReorderInlineStyles,
+  onUpdateRuleStyle
 }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
   const [isDraggingWidth, setIsDraggingWidth] = useState(false)
   const [isDraggingSplit, setIsDraggingSplit] = useState(false)
   const [stylesHeight, setStylesHeight] = useState(180)
-  const [activeTab, setActiveTab] = useState<'elements' | 'computed'>('elements')
+  const [activeTab, setActiveTab] = useState<'elements' | 'computed' | 'changes'>(
+    'elements'
+  )
   const [changedProps, setChangedProps] = useState<Set<string>>(new Set())
+  const [inlineOrder, setInlineOrder] = useState<string[]>([])
+  const [changes, setChanges] = useState<
+    {
+      id: number
+      scope: 'inline' | 'rule'
+      type: 'set' | 'remove' | 'reorder'
+      property?: string
+      oldValue?: string | null
+      newValue?: string | null
+      selector?: string
+      source?: string
+      inlineOrder?: string[]
+      elementPath?: string
+      active?: boolean
+    }[]
+  >([])
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedElementRef = useRef<HTMLDivElement>(null)
   const domTreeContainerRef = useRef<HTMLDivElement>(null)
   const stylesContainerRef = useRef<HTMLDivElement>(null)
   const widthDragStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const dragInlinePropRef = useRef<string | null>(null)
+  const changeIdRef = useRef(0)
 
   useEffect(() => {
     // Reset changed markers when switching to a different element
@@ -194,6 +322,63 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
 
   const isPropChanged = (scope: 'inline' | 'rule', prop: string) =>
     changedProps.has(`${scope}:${prop}`)
+
+  const recordChange = (entry: {
+    scope: 'inline' | 'rule'
+    type: 'set' | 'remove' | 'reorder'
+    property?: string
+    oldValue?: string | null
+    newValue?: string | null
+    selector?: string
+    source?: string
+    inlineOrder?: string[]
+  }) => {
+    setChanges((prev) => {
+      const elementPath = selectedElement?.path
+      const last = prev[prev.length - 1]
+
+      // Coalesce consecutive "set" changes for the same property/selector/source/element
+      if (
+        last &&
+        last.type === 'set' &&
+        entry.type === 'set' &&
+        last.scope === entry.scope &&
+        last.property === entry.property &&
+        last.selector === entry.selector &&
+        last.source === entry.source &&
+        last.elementPath === elementPath
+      ) {
+        const updated = [...prev]
+        updated[updated.length - 1] = {
+          ...last,
+          newValue: entry.newValue
+        }
+        return updated
+      }
+
+      return [
+        ...prev,
+        {
+          ...entry,
+          id: ++changeIdRef.current,
+          elementPath,
+          active: true
+        }
+      ]
+    })
+  }
+
+  // Keep a stable display order for inline styles, and allow reordering.
+  useEffect(() => {
+    const inline = (selectedElement?.styles?.inline || {}) as Record<string, unknown>
+    const keys = Object.keys(inline)
+    setInlineOrder((prev) => {
+      if (prev.length === keys.length && prev.every((k, i) => k === keys[i])) {
+        return prev
+      }
+      return keys
+    })
+  }, [selectedElement?.styles?.inline, selectedElement?.path])
 
   useEffect(() => {
     // Auto-expand and scroll to the selected element (similar to Chrome DevTools)
@@ -429,7 +614,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
     ) => {
       const propLower = prop.toLowerCase()
       const stringValue = String(value ?? '')
-      const enumOptions = getEnumOptions(propLower)
+      const enumOptions: string[] | undefined = getEnumOptions(propLower)
       const colorProp = isColorProperty(propLower)
 
       const handleWheel: React.WheelEventHandler<HTMLInputElement> = (e) => {
@@ -508,6 +693,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
         <input
           className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] text-xs px-1"
           defaultValue={stringValue}
+          list="css-value-suggestions"
           onChange={(e) => {
             const newValue = e.target.value
             update(newValue)
@@ -551,7 +737,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
 
     return (
       <div className="p-2">
-        {Object.keys(inlineStyles).length > 0 && (
+        {inlineOrder.length > 0 && (
           <div className="mb-4">
             <div className="flex items-center justify-between text-xs font-semibold text-gray-300 mb-2">
               <span>element.style</span>
@@ -576,8 +762,38 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
               </button>
             </div>
             <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs space-y-1">
-              {Object.entries(inlineStyles).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2">
+              {inlineOrder.map((key) => {
+                const value = inlineStyles[key]
+                if (value === undefined || value === null) return null
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center gap-2 cursor-move"
+                    draggable
+                    onDragStart={() => {
+                      dragInlinePropRef.current = key
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      const from = dragInlinePropRef.current
+                      dragInlinePropRef.current = null
+                      if (!from || from === key) return
+                      setInlineOrder((prev) => {
+                        const current = [...prev]
+                        const fromIndex = current.indexOf(from)
+                        const toIndex = current.indexOf(key)
+                        if (fromIndex === -1 || toIndex === -1) return prev
+                        current.splice(fromIndex, 1)
+                        current.splice(toIndex, 0, from)
+                        onReorderInlineStyles(current)
+                        return current
+                      })
+                    }}
+                    title="Drag to reorder (affects cascade)"
+                  >
                   <span
                     className={`w-32 flex-shrink-0 ${
                       isPropChanged('inline', key) ? 'text-yellow-300' : 'text-[#9cdcfe]'
@@ -587,52 +803,123 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                   </span>
                   <span className="text-gray-400">:</span>
                   {renderValueEditor(key, value, (newVal) => {
+                    const oldValue = String(value ?? '')
                     onUpdateInlineStyle(key, newVal)
                     markChanged('inline', key)
+                    recordChange({
+                      scope: 'inline',
+                      type: 'set',
+                      property: key,
+                      oldValue,
+                      newValue: newVal
+                    })
                   })}
                   <span className="text-gray-400">;</span>
+                  <button
+                    type="button"
+                    className="ml-1 w-4 h-4 flex items-center justify-center rounded bg-[#3e3e42] text-gray-300 hover:bg-red-600"
+                    title="Remove property"
+                    onClick={() => {
+                      const oldValue = String(inlineStyles[key] ?? '')
+                      recordChange({
+                        scope: 'inline',
+                        type: 'remove',
+                        property: key,
+                        oldValue,
+                        newValue: null
+                      })
+                      onRemoveInlineStyle(key)
+                      setInlineOrder((prev) => prev.filter((k) => k !== key))
+                    }}
+                  >
+                    <span className="text-[11px] leading-none">×</span>
+                  </button>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
 
         {/* Add new inline style */}
         <div className="mb-4">
-          <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs flex items-center gap-2">
+          <div
+            className="bg-[#1e1e1e] rounded p-2 font-mono text-xs flex items-center gap-2"
+            data-role="add-inline-style-row"
+          >
             <input
               data-role="add-style-prop"
+              list="css-property-suggestions"
               className="w-40 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#9cdcfe] px-1"
               placeholder="property"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  const prop = (e.currentTarget as HTMLInputElement).value.trim()
-                  const valueInput = (e.currentTarget.nextSibling as HTMLInputElement | null)
+                  const row = (e.currentTarget as HTMLElement).closest(
+                    '[data-role="add-inline-style-row"]'
+                  ) as HTMLElement | null
+                  const propInput = row?.querySelector(
+                    '[data-role="add-style-prop"]'
+                  ) as HTMLInputElement | null
+                  const valueInput = row?.querySelector(
+                    '[data-role="add-style-value"]'
+                  ) as HTMLInputElement | null
+
+                  const prop = propInput?.value.trim() || ''
                   const val = valueInput?.value.trim() || ''
-                    if (prop && val) {
-                      onAddInlineStyle(prop, val)
-                      markChanged('inline', prop)
-                      ;(e.currentTarget as HTMLInputElement).value = ''
-                      if (valueInput) valueInput.value = ''
-                    }
+
+                  if (prop && val) {
+                    onAddInlineStyle(prop, val)
+                    markChanged('inline', prop)
+                    recordChange({
+                      scope: 'inline',
+                      type: 'set',
+                      property: prop,
+                      oldValue: null,
+                      newValue: val
+                    })
+                    if (propInput) propInput.value = ''
+                    if (valueInput) valueInput.value = ''
+                  } else if (!val && valueInput) {
+                    // If the user hit Enter after typing only the property,
+                    // move focus to the value field like Chrome DevTools.
+                    valueInput.focus()
+                  }
                 }
               }}
             />
             <span className="text-gray-400">:</span>
             <input
+              data-role="add-style-value"
+              list="css-value-suggestions"
               className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] px-1"
               placeholder="value"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  const valueInput = e.currentTarget as HTMLInputElement
-                  const propInput = valueInput.previousSibling as HTMLInputElement | null
+                  const row = (e.currentTarget as HTMLElement).closest(
+                    '[data-role="add-inline-style-row"]'
+                  ) as HTMLElement | null
+                  const propInput = row?.querySelector(
+                    '[data-role="add-style-prop"]'
+                  ) as HTMLInputElement | null
+                  const valueInput = row?.querySelector(
+                    '[data-role="add-style-value"]'
+                  ) as HTMLInputElement | null
+
                   const prop = propInput?.value.trim() || ''
-                  const val = valueInput.value.trim()
+                  const val = valueInput?.value.trim() || ''
+
                   if (prop && val) {
                     onAddInlineStyle(prop, val)
                     markChanged('inline', prop)
-                    valueInput.value = ''
+                    recordChange({
+                      scope: 'inline',
+                      type: 'set',
+                      property: prop,
+                      oldValue: null,
+                      newValue: val
+                    })
                     if (propInput) propInput.value = ''
+                    if (valueInput) valueInput.value = ''
                   }
                 }
               }}
@@ -699,9 +986,23 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                                 </span>
                                 <span className="text-gray-400">: </span>
                                 {renderValueEditor(prop as string, value, (newVal) => {
-                                  // Editing a rule property applies an inline override on the element
-                                  onUpdateInlineStyle(prop as string, newVal)
+                                  const oldValue = String(value ?? '')
+                                  onUpdateRuleStyle(
+                                    rule.sheetIndex,
+                                    rule.ruleIndex,
+                                    prop as string,
+                                    newVal
+                                  )
                                   markChanged('rule', prop as string)
+                                  recordChange({
+                                    scope: 'rule',
+                                    type: 'set',
+                                    property: prop as string,
+                                    oldValue,
+                                    newValue: newVal,
+                                    selector: rule.selector,
+                                    source: group.source
+                                  })
                                 })}
                                 <span className="text-gray-400">;</span>
                               </div>
@@ -709,41 +1010,102 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                           </div>
                         </div>
                       ))}
-                      {/* Add override property row scoped to this stylesheet (still writes inline) */}
-                      <div className="flex items-center gap-2 mt-1">
+                      {/* Add override property row scoped to this stylesheet */}
+                      <div
+                        className="flex items-center gap-2 mt-1"
+                        data-role="add-rule-row"
+                      >
                         <input
                           data-role="add-rule-prop"
+                          list="css-property-suggestions"
                           className="w-40 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#9cdcfe] px-1"
                           placeholder="property"
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
-                              const prop = (e.currentTarget as HTMLInputElement).value.trim()
-                              const valueInput = (e.currentTarget.nextSibling as HTMLInputElement | null)
+                              const row = (e.currentTarget as HTMLElement).closest(
+                                '[data-role="add-rule-row"]'
+                              ) as HTMLElement | null
+                              const propInput = row?.querySelector(
+                                '[data-role="add-rule-prop"]'
+                              ) as HTMLInputElement | null
+                              const valueInput = row?.querySelector(
+                                '[data-role="add-rule-value"]'
+                              ) as HTMLInputElement | null
+
+                              const prop = propInput?.value.trim() || ''
                               const val = valueInput?.value.trim() || ''
+
                               if (prop && val) {
-                                onAddInlineStyle(prop, val)
-                                markChanged('inline', prop)
-                                ;(e.currentTarget as HTMLInputElement).value = ''
+                                const primaryRule = rulesInOrder[0]
+                                if (primaryRule) {
+                                  onUpdateRuleStyle(
+                                    primaryRule.sheetIndex,
+                                    primaryRule.ruleIndex,
+                                    prop,
+                                    val
+                                  )
+                                }
+                                markChanged('rule', prop)
+                                recordChange({
+                                  scope: 'rule',
+                                  type: 'set',
+                                  property: prop,
+                                  oldValue: null,
+                                  newValue: val,
+                                  selector: primaryRule?.selector,
+                                  source: group.source
+                                })
+                                if (propInput) propInput.value = ''
                                 if (valueInput) valueInput.value = ''
+                              } else if (!val && valueInput) {
+                                valueInput.focus()
                               }
                             }
                           }}
                         />
                         <span className="text-gray-400">: </span>
                         <input
+                          data-role="add-rule-value"
+                          list="css-value-suggestions"
                           className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] px-1"
                           placeholder="value"
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
-                              const valueInput = e.currentTarget as HTMLInputElement
-                              const propInput = valueInput.previousSibling as HTMLInputElement | null
+                              const row = (e.currentTarget as HTMLElement).closest(
+                                '[data-role="add-rule-row"]'
+                              ) as HTMLElement | null
+                              const propInput = row?.querySelector(
+                                '[data-role="add-rule-prop"]'
+                              ) as HTMLInputElement | null
+                              const valueInput = row?.querySelector(
+                                '[data-role="add-rule-value"]'
+                              ) as HTMLInputElement | null
+
                               const prop = propInput?.value.trim() || ''
-                              const val = valueInput.value.trim()
+                              const val = valueInput?.value.trim() || ''
+
                               if (prop && val) {
-                                onAddInlineStyle(prop, val)
-                                markChanged('inline', prop)
-                                valueInput.value = ''
+                                const primaryRule = rulesInOrder[0]
+                                if (primaryRule) {
+                                  onUpdateRuleStyle(
+                                    primaryRule.sheetIndex,
+                                    primaryRule.ruleIndex,
+                                    prop,
+                                    val
+                                  )
+                                }
+                                markChanged('rule', prop)
+                                recordChange({
+                                  scope: 'rule',
+                                  type: 'set',
+                                  property: prop,
+                                  oldValue: null,
+                                  newValue: val,
+                                  selector: primaryRule?.selector,
+                                  source: group.source
+                                })
                                 if (propInput) propInput.value = ''
+                                if (valueInput) valueInput.value = ''
                               }
                             }
                           }}
@@ -801,6 +1163,188 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
     )
   }
 
+  const renderChanges = () => {
+    if (changes.length === 0) {
+      return (
+        <div className="text-gray-400 text-sm p-4">
+          No style changes yet. Edit styles or add custom properties to see them here.
+        </div>
+      )
+    }
+
+    return (
+      <div className="p-2 h-full flex flex-col">
+        <div className="bg-[#1e1e1e] rounded p-2 font-mono text-xs overflow-auto flex-1 space-y-1">
+          {changes.map((change) => {
+            const locationLabel =
+              change.scope === 'inline'
+                ? 'element.style'
+                : change.selector || 'rule'
+
+            const sourceLabel =
+              change.source !== undefined && change.source !== null
+                ? getStylesheetLabelAndTitle(change.source).label
+                : undefined
+
+            let summary = ''
+            if (change.type === 'set') {
+              if (change.oldValue == null || change.oldValue === '') {
+                summary = `${change.property}: ${change.newValue}`
+              } else {
+                summary = `${change.property}: ${change.oldValue} → ${change.newValue}`
+              }
+            } else if (change.type === 'remove') {
+              summary = `${change.property} removed (was ${change.oldValue})`
+            } else if (change.type === 'reorder') {
+              summary = 'Reordered inline properties'
+            }
+
+            const canToggle =
+              !!change.property && (change.type === 'set' || change.type === 'remove')
+            const isDisabled = change.active === false
+
+            return (
+              <div
+                key={change.id}
+                className="flex flex-col border-b border-gray-800 pb-1 last:border-0"
+              >
+                <div className="flex justify-between items-center">
+                  <span className="text-[#9cdcfe] mr-2 truncate max-w-[55%]">
+                    {locationLabel}
+                  </span>
+                  <div className="flex items-center gap-1 max-w-[40%] justify-end">
+                    {sourceLabel && (
+                      <span className="text-[10px] text-gray-500 truncate">
+                        {sourceLabel}
+                      </span>
+                    )}
+                    {canToggle && (
+                      <button
+                        type="button"
+                        className={`ml-1 w-4 h-4 flex items-center justify-center rounded flex-shrink-0 ${
+                          isDisabled
+                            ? 'bg-[#3e3e42] text-gray-200 hover:bg-green-600'
+                            : 'bg-[#3e3e42] text-gray-300 hover:bg-red-600'
+                        }`}
+                        title={
+                          isDisabled ? 'Undo delete (re-apply this change)' : 'Temporarily disable this change'
+                        }
+                        onClick={() => {
+                          if (!change.property) return
+
+                          const currentlyActive = change.active !== false
+                          const willBeActive = !currentlyActive
+
+                          // Update active flag for this change entry
+                          setChanges((prev) =>
+                            prev.map((entry) =>
+                              entry.id === change.id ? { ...entry, active: willBeActive } : entry
+                            )
+                          )
+
+                          if (change.scope === 'inline') {
+                            if (change.type === 'set') {
+                              if (currentlyActive) {
+                                // Disable: revert to old value
+                                if (!change.oldValue) {
+                                  onRemoveInlineStyle(change.property)
+                                } else {
+                                  onUpdateInlineStyle(change.property, change.oldValue)
+                                  markChanged('inline', change.property)
+                                }
+                              } else {
+                                // Re-enable: apply new value again
+                                if (!change.newValue) {
+                                  onRemoveInlineStyle(change.property)
+                                } else {
+                                  onUpdateInlineStyle(change.property, change.newValue)
+                                  markChanged('inline', change.property)
+                                }
+                              }
+                            } else if (change.type === 'remove') {
+                              if (currentlyActive) {
+                                // Disable deletion: restore old value
+                                if (change.oldValue) {
+                                  onUpdateInlineStyle(change.property, change.oldValue)
+                                  markChanged('inline', change.property)
+                                }
+                              } else {
+                                // Re-enable deletion: remove again
+                                onRemoveInlineStyle(change.property)
+                              }
+                            }
+                          } else if (change.scope === 'rule') {
+                            if (!change.selector || !change.source) return
+                            const stylesheetRules = (selectedElement?.styles?.rules ||
+                              []) as any[]
+                            const targetRule = stylesheetRules.find(
+                              (r) =>
+                                r.selector === change.selector &&
+                                r.source === change.source
+                            )
+                            if (!targetRule) return
+
+                            const sheetIndex = targetRule.sheetIndex
+                            const ruleIndex = targetRule.ruleIndex
+                            if (
+                              typeof sheetIndex !== 'number' ||
+                              typeof ruleIndex !== 'number'
+                            ) {
+                              return
+                            }
+
+                            if (change.type === 'set') {
+                              // For rules we treat disable as reverting to old value (or clearing if none),
+                              // and re-enable as applying the new value again.
+                              if (currentlyActive) {
+                                const revertVal =
+                                  change.oldValue !== undefined && change.oldValue !== null
+                                    ? change.oldValue
+                                    : ''
+                                onUpdateRuleStyle(
+                                  sheetIndex,
+                                  ruleIndex,
+                                  change.property,
+                                  revertVal
+                                )
+                                if (change.oldValue) {
+                                  markChanged('rule', change.property)
+                                }
+                              } else if (change.newValue !== undefined && change.newValue !== null) {
+                                onUpdateRuleStyle(
+                                  sheetIndex,
+                                  ruleIndex,
+                                  change.property,
+                                  change.newValue
+                                )
+                                markChanged('rule', change.property)
+                              }
+                            }
+                          }
+                        }}
+                      >
+                        <span className="text-[11px] leading-none">
+                          {isDisabled ? '↺' : '×'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div
+                  className={`text-[11px] break-all ${
+                    isDisabled ? 'text-gray-500' : 'text-[#ce9178]'
+                  }`}
+                >
+                  {summary}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   // Fixed heights (in pixels) for layout calculations.
   const HEADER_HEIGHT = 32
   const FOOTER_HEIGHT = selectedElement ? 28 : 0
@@ -852,6 +1396,16 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
               onClick={() => setActiveTab('computed')}
             >
               Computed
+            </button>
+            <button
+              className={`px-2 py-1 border-l border-gray-700 ${
+                activeTab === 'changes'
+                  ? 'bg-[#3e3e42] text-white'
+                  : 'bg-transparent text-gray-300 hover:bg-[#3e3e42]/60'
+              }`}
+              onClick={() => setActiveTab('changes')}
+            >
+              Changes
             </button>
           </div>
         </div>
@@ -944,6 +1498,30 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
           {renderComputedStyles()}
         </div>
       )}
+
+      {activeTab === 'changes' && (
+        <div
+          className="absolute left-0 right-0 bg-[#252526] border-t border-gray-700 flex flex-col"
+          style={{
+            top: HEADER_HEIGHT,
+            bottom: FOOTER_HEIGHT
+          }}
+        >
+          {renderChanges()}
+        </div>
+      )}
+
+      {/* Global datalists for autocomplete suggestions */}
+      <datalist id="css-property-suggestions">
+        {CSS_PROPERTY_SUGGESTIONS.map((prop) => (
+          <option key={prop} value={prop} />
+        ))}
+      </datalist>
+      <datalist id="css-value-suggestions">
+        {CSS_VALUE_SUGGESTIONS.map((val) => (
+          <option key={val} value={val} />
+        ))}
+      </datalist>
 
       {/* Selected element info footer: fixed at bottom */}
       {selectedElement && (

@@ -309,6 +309,152 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
     }
   }
 
+  const handleUpdateRuleStyle = (
+    sheetIndex: number,
+    ruleIndex: number,
+    property: string,
+    value: string
+  ) => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    try {
+      const iframeWin = iframe.contentWindow
+      const iframeDoc = iframeWin?.document
+      const styleSheets = iframeDoc?.styleSheets
+      const sheet = styleSheets?.[sheetIndex] as CSSStyleSheet | undefined
+      if (!sheet) return
+
+      let rules: CSSRuleList | undefined
+      try {
+        // Accessing cssRules can throw for cross-origin stylesheets
+        rules = sheet.cssRules || (sheet as any).rules
+      } catch {
+        return
+      }
+
+      const rule = rules?.[ruleIndex] as CSSStyleRule | undefined
+      if (!rule || !(rule as any).style) return
+
+      ;(rule as CSSStyleRule).style.setProperty(property, value)
+
+      // Update our cached selectedElement rules so the panel reflects the change
+      setSelectedElement((prev: any) => {
+        if (!prev) return prev
+        const prevStyles = prev.styles || {}
+        const prevRules = prevStyles.rules || []
+        const newRules = prevRules.map((r: any) => {
+          if (r.sheetIndex === sheetIndex && r.ruleIndex === ruleIndex) {
+            return {
+              ...r,
+              style: {
+                ...(r.style || {}),
+                [property]: value
+              }
+            }
+          }
+          return r
+        })
+        return {
+          ...prev,
+          styles: {
+            ...prevStyles,
+            rules: newRules
+          }
+        }
+      })
+    } catch (err) {
+      console.error('Failed to update rule style:', err)
+    }
+  }
+
+  const handleRemoveInlineStyle = (property: string) => {
+    const iframe = iframeRef.current
+    if (!iframe || !selectedElement?.path) return
+
+    try {
+      const iframeWin = iframe.contentWindow
+      if (!iframeWin) return
+
+      const iframeDoc = iframeWin.document
+      if (!iframeDoc) return
+
+      const element = iframeDoc.querySelector(selectedElement.path)
+      if (element && (element as HTMLElement).style) {
+        ;(element as HTMLElement).style.removeProperty(property)
+      }
+
+      setSelectedElement((prev: any) => {
+        if (!prev) return prev
+        const prevStyles = prev.styles || {}
+        const prevInline = { ...(prevStyles.inline || {}) }
+        if (!(property in prevInline)) return prev
+        delete prevInline[property]
+        return {
+          ...prev,
+          styles: {
+            ...prevStyles,
+            inline: prevInline
+          }
+        }
+      })
+    } catch (err) {
+      console.error('Failed to remove inline style:', err)
+    }
+  }
+
+  const handleReorderInlineStyles = (orderedKeys: string[]) => {
+    const iframe = iframeRef.current
+
+    setSelectedElement((prev: any) => {
+      if (!prev) return prev
+      const prevStyles = prev.styles || {}
+      const prevInline = prevStyles.inline || {}
+
+      const newInline: Record<string, string> = {}
+      // First, apply the explicit ordered keys
+      orderedKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(prevInline, key)) {
+          newInline[key] = prevInline[key]
+        }
+      })
+      // Then, append any keys that weren't in orderedKeys to avoid losing data
+      Object.keys(prevInline).forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(newInline, key)) {
+          newInline[key] = prevInline[key]
+        }
+      })
+
+      // Update the actual DOM inline style to match the new order
+      try {
+        if (iframe && prev.path) {
+          const iframeWin = iframe.contentWindow
+          const iframeDoc = iframeWin?.document
+          const element = iframeDoc?.querySelector(prev.path) as HTMLElement | null
+          if (element && element.style) {
+            let cssText = ''
+            Object.entries(newInline).forEach(([prop, val]) => {
+              if (val != null && String(val).trim() !== '') {
+                cssText += `${prop}: ${String(val)}; `
+              }
+            })
+            element.setAttribute('style', cssText.trim())
+          }
+        }
+      } catch (err) {
+        console.error('Failed to reorder inline styles:', err)
+      }
+
+      return {
+        ...prev,
+        styles: {
+          ...prevStyles,
+          inline: newInline
+        }
+      }
+    })
+  }
+
   if (!url) {
     return (
       <div className="flex items-center justify-center h-full text-vscode-text-muted">
@@ -341,6 +487,9 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
               className="block w-full text-left px-3 py-2 hover:bg-vscode-hover border-b border-vscode-border"
               onClick={() => {
                 setContextMenu(null)
+                setSelectedElement(null)
+                setPendingElement(null)
+                setShowInspect(false)
                 const iframe = iframeRef.current
                 if (iframe) {
                   try {
@@ -396,6 +545,9 @@ const BrowserPreview: React.FC<{ url: string }> = ({ url }) => {
           onWidthChange={setInspectPanelWidth}
           onUpdateInlineStyle={handleUpdateInlineStyle}
           onAddInlineStyle={handleUpdateInlineStyle}
+          onRemoveInlineStyle={handleRemoveInlineStyle}
+          onReorderInlineStyles={handleReorderInlineStyles}
+          onUpdateRuleStyle={handleUpdateRuleStyle}
         />
       )}
     </div>
