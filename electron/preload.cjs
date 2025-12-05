@@ -1,5 +1,46 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+// Central registry so we only ever attach ONE ipcRenderer listener per menu event.
+const MENU_EVENTS = [
+  'menu-new-file',
+  'menu-open-file',
+  'menu-save-file',
+  'menu-save-and-sync',
+  'menu-save-as',
+  'menu-save-all',
+  'menu-find',
+  'menu-replace',
+  'menu-ftp-connect',
+  'menu-ftp-disconnect',
+  'menu-ftp-upload',
+  'menu-ftp-download',
+  'menu-go-to-page'
+]
+
+// For each menu event, keep a Set of subscriber callbacks from the renderer.
+const menuSubscribers = new Map()
+// Track whether we've attached the single ipcRenderer handler for a given event.
+const menuIpcHandlers = new Map()
+
+function ensureMenuIpcHandler(event) {
+  if (!menuIpcHandlers.has(event)) {
+    const handler = (e, ...args) => {
+      const subs = menuSubscribers.get(event)
+      if (!subs || subs.size === 0) return
+      // Call each subscriber with the same signature as before: (event, action, ...args)
+      subs.forEach((cb) => {
+        try {
+          cb(e, event, ...args)
+        } catch {
+          // Swallow subscriber errors so one bad listener doesn't break the others.
+        }
+      })
+    }
+    menuIpcHandlers.set(event, handler)
+    ipcRenderer.on(event, handler)
+  }
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   ftpConnect: (config) => ipcRenderer.invoke('ftp-connect', config),
   ftpDisconnect: () => ipcRenderer.invoke('ftp-disconnect'),
@@ -48,23 +89,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsSetDbConfig: (config) => ipcRenderer.invoke('settings-set-db-config', config),
 
   onMenuEvent: (callback) => {
-    const events = [
-      'menu-new-file',
-      'menu-open-file',
-      'menu-save-file',
-      'menu-save-and-sync',
-      'menu-save-as',
-      'menu-save-all',
-      'menu-find',
-      'menu-replace',
-      'menu-ftp-connect',
-      'menu-ftp-disconnect',
-      'menu-ftp-upload',
-      'menu-ftp-download',
-      'menu-go-to-page'
-    ]
-    events.forEach(event => { ipcRenderer.on(event, (e, ...args) => callback(e, event, ...args)) })
-    return () => { events.forEach(event => { ipcRenderer.removeListener(event, (e, ...args) => callback(e, event, ...args)) }) }
+    // Lazily ensure ipcRenderer has ONE handler for each event, then just
+    // register this callback in our own subscriber registry.
+    MENU_EVENTS.forEach((event) => {
+      if (!menuSubscribers.has(event)) {
+        menuSubscribers.set(event, new Set())
+      }
+      ensureMenuIpcHandler(event)
+      const subs = menuSubscribers.get(event)
+      subs.add(callback)
+    })
+
+    // Return an unsubscribe function that removes this callback from all events.
+    return () => {
+      MENU_EVENTS.forEach((event) => {
+        const subs = menuSubscribers.get(event)
+        if (!subs) return
+        subs.delete(callback)
+      })
+    }
   },
 
   onSyncProgress: (callback) => {

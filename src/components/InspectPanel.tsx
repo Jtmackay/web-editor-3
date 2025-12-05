@@ -693,8 +693,10 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
             {renderAttributes(node.attributes)}
             <span className="text-[#569cd6]">&gt;</span>
             
-            {!hasChildren && node.textContent && (
-              <span className="text-gray-300">{node.textContent.substring(0, 50)}</span>
+            {node.textContent && (
+              <span className="text-gray-300">
+                {node.textContent.substring(0, 50)}
+              </span>
             )}
             
             {!hasChildren && (
@@ -1345,6 +1347,15 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                     change.elementPath &&
                     typeof change.property === 'string'
                   ) {
+                    const isNewInline =
+                      change.type === 'set' &&
+                      (change.oldValue === null || change.oldValue === '')
+                    if (isNewInline) {
+                      // Surface this change in the UI, but do not attempt to
+                      // save it back into the HTML automatically.
+                      return
+                    }
+
                     const key = `${change.elementPath}::${change.property}`
                     const oldValue =
                       typeof change.oldValue === 'string' ? change.oldValue : null
@@ -1384,6 +1395,11 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
               change.source !== undefined && change.source !== null
                 ? getStylesheetLabelAndTitle(change.source).label
                 : undefined
+
+            const isNewInline =
+              change.scope === 'inline' &&
+              change.type === 'set' &&
+              (change.oldValue === null || change.oldValue === '')
 
             let summary = ''
             if (change.type === 'set') {
@@ -1426,9 +1442,19 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                 className="flex flex-col border-b border-gray-800 pb-1 last:border-0"
               >
                 <div className="flex justify-between items-center">
-                  <span className="text-[#9cdcfe] mr-2 truncate max-w-[55%]">
-                    {locationLabel}
-                  </span>
+                  <div className="flex items-center gap-1 max-w-[55%] mr-2">
+                    {isNewInline && (
+                      <span
+                        className="inline-flex items-center justify-center w-3 h-3 text-[9px] rounded-full bg-yellow-500 text-black flex-shrink-0"
+                        title="New inline style must be added to the HTML file manually"
+                      >
+                        !
+                      </span>
+                    )}
+                    <span className="text-[#9cdcfe] truncate">
+                      {locationLabel}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-1 max-w-[40%] justify-end">
                     {sourceLabel && (
                       <span className="text-[10px] text-gray-500 truncate">

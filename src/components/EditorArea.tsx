@@ -709,6 +709,7 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           // style="..." attribute based on the live DOM snapshot.
           if (inlineStyleChanges.length > 0) {
             let workingPatched = patched
+            let reportedAmbiguousInlineMatch = false
 
             for (const change of inlineStyleChanges) {
               const { path, property, oldValue, newValue } = change
@@ -799,37 +800,11 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
                       const escapeRegExp = (s: string) =>
                         s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-                      let pattern = `<\\s*${tagName}`
+                      const styleRe = /style\s*=\s*("([^"]*)"|'([^']*)')/i
 
-                      if (id) {
-                        // Prefer id-based matching: it should be unique and
-                        // stable, and avoids touching other elements.
-                        pattern += `[^>]*\\bid\\s*=\\s*["']${escapeRegExp(id)}["']`
-                      } else if (classAttr) {
-                        // Fallback: anchor by exact class attribute string for
-                        // this tag. This will only ever update the *first*
-                        // matching tag in the source, so even if the class is
-                        // shared we won't apply the style to multiple elements.
-                        pattern += `[^>]*\\bclass\\s*=\\s*["']${escapeRegExp(classAttr)}["']`
-                      } else {
-                        // No id or class to anchor this element in the original
-                        // HTML; skip rather than risk a completely wrong match.
-                        continue
-                      }
-
-                      pattern += `[^>]*>`
-
-                      const re = new RegExp(pattern, 'i')
-                      const m = re.exec(workingPatched)
-                      if (m && m.index >= 0) {
-                        const start = m.index
-                        const end = start + m[0].length
-                        const originalTag = m[0]
-
-                        // If a style attribute already exists on this tag in the
-                        // source, replace its contents; otherwise, inject one.
+                      const applyTagUpdate = (start: number, end: number) => {
+                        const originalTag = workingPatched.slice(start, end)
                         let newTag = originalTag
-                        const styleRe = /style\s*=\s*("([^"]*)"|'([^']*)')/i
                         const sm = styleRe.exec(originalTag)
                         if (sm) {
                           const quoteChar = sm[1].startsWith('"') ? '"' : "'"
@@ -838,7 +813,6 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
                             `style=${quoteChar}${liveStyle}${quoteChar}` +
                             originalTag.slice(sm.index + sm[0].length)
                         } else {
-                          // Insert style attribute just before the closing ">"
                           const gtIndex = originalTag.lastIndexOf('>')
                           if (gtIndex !== -1) {
                             const before = originalTag.slice(0, gtIndex)
@@ -846,12 +820,88 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
                             newTag = `${before} style="${liveStyle}"${after}`
                           }
                         }
-
                         if (newTag !== originalTag) {
                           workingPatched =
                             workingPatched.slice(0, start) +
                             newTag +
                             workingPatched.slice(end)
+                          return true
+                        }
+                        return false
+                      }
+
+                      let updated = false
+
+                      // First try: id/class anchored regex on the start tag, if
+                      // we have either id or class information.
+                      if (id || classAttr) {
+                        let pattern = `<\\s*${tagName}`
+                        if (id) {
+                          // Prefer id-based matching: it should be unique and
+                          // stable, and avoids touching other elements.
+                          pattern += `[^>]*\\bid\\s*=\\s*["']${escapeRegExp(id)}["']`
+                        } else if (classAttr) {
+                          // Fallback: anchor by exact class attribute string for
+                          // this tag. This will only ever update the *first*
+                          // matching tag in the source.
+                          pattern += `[^>]*\\bclass\\s*=\\s*["']${escapeRegExp(
+                            classAttr
+                          )}["']`
+                        }
+                        pattern += `[^>]*>`
+
+                        const re = new RegExp(pattern, 'i')
+                        const m = re.exec(workingPatched)
+                        if (m && m.index >= 0) {
+                          const start = m.index
+                          const end = start + m[0].length
+                          updated = applyTagUpdate(start, end)
+                        }
+                      }
+
+                      // Fallback: use words from the element's text content to
+                      // locate the closest preceding <tagName ...> in the
+                      // source when id/class matching fails (common when the
+                      // source contains PHP or different attribute order).
+                      if (!updated) {
+                        const text = (el.textContent || '').trim()
+                        if (text) {
+                          const words = text.split(/\s+/).filter(Boolean).slice(0, 4)
+                          if (words.length > 0) {
+                            const patternWords = words
+                              .map((w) => escapeRegExp(w))
+                              .join('[\\s\\S]*?')
+                            const textRe = new RegExp(patternWords, 'gi')
+
+                            const matchIndices: number[] = []
+                            let m2: RegExpExecArray | null
+                            while ((m2 = textRe.exec(workingPatched)) !== null) {
+                              matchIndices.push(m2.index)
+                              if (matchIndices.length > 2) break
+                            }
+
+                            if (matchIndices.length === 1) {
+                              const idx = matchIndices[0]
+                              const openIdx = workingPatched.lastIndexOf(
+                                `<${tagName}`,
+                                idx
+                              )
+                              if (openIdx !== -1) {
+                                const gtIndex = workingPatched.indexOf('>', openIdx)
+                                if (gtIndex !== -1) {
+                                  applyTagUpdate(openIdx, gtIndex + 1)
+                                }
+                              }
+                            } else if (
+                              matchIndices.length > 1 &&
+                              !reportedAmbiguousInlineMatch
+                            ) {
+                              reportedAmbiguousInlineMatch = true
+                              editorState.setError(
+                                'Could not safely save a new inline style because multiple matching elements were found in the source. Please add a unique id or adjust the element text and try again.'
+                              )
+                            }
+                          }
                         }
                       }
                     }
