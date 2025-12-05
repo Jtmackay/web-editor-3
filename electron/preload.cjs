@@ -13,8 +13,7 @@ const MENU_EVENTS = [
   'menu-ftp-connect',
   'menu-ftp-disconnect',
   'menu-ftp-upload',
-  'menu-ftp-download',
-  'menu-go-to-page'
+  'menu-ftp-download'
 ]
 
 // For each menu event, keep a Set of subscriber callbacks from the renderer.

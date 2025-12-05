@@ -6,14 +6,26 @@ const { DatabaseService } = require('./services/databaseService.cjs')
 const { FileCacheService } = require('./services/fileCacheService.cjs')
 const { SettingsService } = require('./services/settingsService.cjs')
 
-// Some GPUs / drivers on Windows can crash when using GPU acceleration.
-// Disable it globally so the app can start reliably.
-app.disableHardwareAcceleration()
+// Hardware acceleration is enabled (default) for better rendering performance.
+// If you encounter GPU-related crashes on some Windows machines, you can
+// uncomment the following line to disable it as a fallback:
+// app.disableHardwareAcceleration()
 
 // Disable web security to allow cross-origin iframe access for inspect feature
 app.commandLine.appendSwitch('disable-web-security')
 app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors')
 app.commandLine.appendSwitch('disable-site-isolation-trials')
+
+// Try to force-enable GPU acceleration even on machines that Chromium would
+// normally block (old drivers, remote sessions, etc.). If this causes crashes
+// on some systems, you can comment these out or guard them by an env flag.
+app.commandLine.appendSwitch('ignore-gpu-blocklist')
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+app.commandLine.appendSwitch('enable-zero-copy')
+// Prefer ANGLE / Direct3D like Chrome does on Windows.
+app.commandLine.appendSwitch('use-angle', 'd3d11')
+app.commandLine.appendSwitch('use-gl', 'angle')
+app.commandLine.appendSwitch('enable-webgl')
 
 let mainWindow
 let ftpService
@@ -108,9 +120,7 @@ function createMenu() {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
-        { role: 'togglefullscreen' },
-        { type: 'separator' },
-        { label: 'Go To Page', click: () => mainWindow.webContents.send('menu-go-to-page') }
+        { role: 'togglefullscreen' }
       ]
     },
     {
@@ -513,6 +523,14 @@ function setupIPC() {
 }
 
 app.whenReady().then(async () => {
+  // Log GPU feature status so we can confirm hardware acceleration is active.
+  try {
+    const gpuStatus = app.getGPUFeatureStatus()
+    console.log('[electron] GPU feature status:', gpuStatus)
+  } catch (err) {
+    console.log('[electron] Unable to read GPU feature status:', err && err.message ? err.message : err)
+  }
+
   ftpService = new FTPService()
   databaseService = new DatabaseService()
   fileCacheService = new FileCacheService()

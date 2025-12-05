@@ -188,25 +188,6 @@ function App() {
         } else {
           useEditorStore.getState().setError(res.error || 'Failed to save as')
         }
-      } else if (action === 'menu-go-to-page') {
-        const editor = useEditorStore.getState()
-        const ftp = useFTPStore.getState()
-        const activeId = editor.activeFile
-        if (!activeId) return
-        const file = editor.openFiles.find(f => f.id === activeId)
-        if (!file) return
-        const connId = ftp.activeConnection
-        const conn = connId ? ftp.connections.find(c => c.id === connId) : undefined
-        const baseRaw = conn?.appendedUrl || ''
-        if (!baseRaw) {
-          window.alert('Appended URL is not set in FTP settings')
-          return
-        }
-        const hasProtocol = /^https?:\/\//i.test(baseRaw)
-        const base = (hasProtocol ? baseRaw : `https://${baseRaw}`).replace(/\/$/, '')
-        const path = String(file.path || '').replace(/\\/g, '/').startsWith('/') ? String(file.path) : `/${String(file.path)}`
-        const url = encodeURI(`${base}${path}`)
-        await electronAPI.openExternalUrl(url)
       }
     })
     return () => { unsubscribe && unsubscribe() }
