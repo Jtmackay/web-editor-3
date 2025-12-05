@@ -612,21 +612,47 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       return null
     }
 
-    const pathPart = urlObj.pathname || '/'
+    const normalizedPath = (urlObj.pathname || '/').replace(/\\/g, '/')
     const normalizedStart = startAfterRaw
       .replace(/\\/g, '/')
       .replace(/^\/+/, '')
       .replace(/\/+$/, '')
 
-    if (normalizedStart) {
-      const trimmed = pathPart.replace(/^\/+/, '')
-      return `/${normalizedStart}/${trimmed}`
+    if (!normalizedStart) {
+      return normalizedPath || '/'
     }
 
-    return pathPart || '/'
+    const rel = normalizedPath.replace(/^\/+/, '')
+    const lowerRel = rel.toLowerCase()
+    const lowerStart = normalizedStart.toLowerCase()
+
+    // If the path already starts with the startAfter segment, treat it as the
+    // true remote path to avoid duplicating the prefix (e.g. "/www/www/...").
+    if (lowerRel.startsWith(lowerStart + '/') || lowerRel === lowerStart) {
+      return `/${rel}`
+    }
+
+    // Otherwise, assume the remote path is rooted under startAfter.
+    return `/${normalizedStart}/${rel}`
   }
 
-  const handleSaveInspectorChanges = async () => {
+  // escapeRegExp was previously used for a more complex inline-style patcher;
+  // it is currently unused but kept here for potential future use.
+
+  const handleSaveInspectorChanges = async (payload?: {
+    textChanges: {
+      path: string
+      oldText: string
+      newText: string
+      kind?: 'text' | 'html'
+    }[]
+    inlineStyleChanges?: {
+      path: string
+      property: string
+      oldValue: string | null
+      newValue: string | null
+    }[]
+  }) => {
     const iframe = iframeRef.current
     if (!iframe) return
 
@@ -636,49 +662,256 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       if (!iframeDoc) return
 
       const editorState = useEditorStore.getState()
+      const textChanges = payload?.textChanges || []
+      const inlineStyleChanges = payload?.inlineStyleChanges || []
 
-      // 1. Save the current HTML (including inline styles and text edits)
-      const htmlContent =
-        iframeDoc.documentElement && iframeDoc.documentElement.outerHTML
-          ? iframeDoc.documentElement.outerHTML
-          : ''
-
+      // 1. Save HTML by patching the original source content (never by serializing
+      // the live DOM). This keeps any server-side code (PHP includes, etc.)
+      // untouched and only applies the specific text / inline-style edits.
       const htmlRemotePath = sourcePath || ''
+      let savedHtml = false
+
       if (htmlRemotePath) {
-        // Update any open editor tabs for this HTML file so the code view
-        // matches what was changed in the inspector.
         const matchingFiles = editorState.openFiles.filter(
           (f) => f.kind !== 'preview' && f.path === htmlRemotePath
         )
-        matchingFiles.forEach((file) => {
-          editorState.updateFileContent(file.id, htmlContent)
-        })
 
-        const htmlRes = await electronAPI.localSaveFile(htmlRemotePath, htmlContent)
-        if (!htmlRes.success) {
-          const msg = htmlRes.error || 'Failed to save HTML to sync folder'
-          editorState.setError(msg)
-          editorState.setStatusMessage(null)
-          return
+        let sourceContent: string | null = null
+        if (matchingFiles.length > 0) {
+          sourceContent = matchingFiles[0].content
+        } else {
+          const dl: { success: boolean; content?: string; error?: string } =
+            await electronAPI.ftpDownloadFile(htmlRemotePath, undefined as any)
+          if (dl.success && typeof dl.content === 'string') {
+            sourceContent = dl.content
+          }
         }
 
-        // Mark any matching editor tabs as clean after successful save.
-        matchingFiles.forEach((file) => {
-          editorState.setFileDirty(file.id, false)
-        })
+        if (sourceContent && (textChanges.length > 0 || inlineStyleChanges.length > 0)) {
+          let patched = sourceContent
 
-        editorState.setStatusMessage(`Saved inspector changes to: ${htmlRemotePath}`)
-        editorState.setError(null)
+          // 1a. Patch text content using the tracked old/new text snippets.
+          for (const change of textChanges) {
+            const oldText = change.oldText || ''
+            const newText = change.newText || ''
+            if (!oldText) continue
+            const idx = patched.indexOf(oldText)
+            if (idx === -1) continue
+            patched =
+              patched.slice(0, idx) + newText + patched.slice(idx + oldText.length)
+          }
+
+          // 1b. Patch inline element.style attributes textually in the original
+          // HTML/PHP source by rewriting style="..." attributes. We do NOT
+          // serialize the DOM; instead we look for style attributes that contain
+          // the edited property and update just that declaration. For elements
+          // that previously had no inline style attribute, we create a new
+          // style="..." attribute based on the live DOM snapshot.
+          if (inlineStyleChanges.length > 0) {
+            let workingPatched = patched
+
+            for (const change of inlineStyleChanges) {
+              const { path, property, oldValue, newValue } = change
+              if (!property) continue
+              const hasOldValue =
+                typeof oldValue === 'string' && oldValue.trim().length > 0
+
+              // 1b(i). For edits/removals of an existing property, rewrite any
+              // style=\"...\" attributes that contain this property. We no
+              // longer rely on the exact previous value (which can differ in
+              // formatting, e.g. \"red\" vs \"rgba(...)\"); instead we update
+              // every declaration for this property. New properties (no
+              // oldValue) are handled by the DOM-anchored injection logic
+              // below, so we don't append missing properties here.
+              if (hasOldValue) {
+                const styleAttrRegex = /style\s*=\s*("([^"]*)"|'([^']*)')/gi
+                let match: RegExpExecArray | null
+                let result = ''
+                let lastIndex = 0
+
+                while ((match = styleAttrRegex.exec(workingPatched)) !== null) {
+                  const matchStart = match.index
+                  const matchEnd = styleAttrRegex.lastIndex
+                  const quoteChar = match[1].startsWith('"') ? '"' : "'"
+                  const styleContent = match[2] ?? match[3] ?? ''
+
+                  // Copy everything before this attribute unchanged
+                  result += workingPatched.slice(lastIndex, matchStart)
+
+                  // Rewrite the style content
+                  const decls = styleContent
+                    .split(';')
+                    .map((d) => d.trim())
+                    .filter(Boolean)
+
+                  const newDecls: string[] = []
+
+                  decls.forEach((decl) => {
+                    const colonIdx = decl.indexOf(':')
+                    if (colonIdx === -1) {
+                      newDecls.push(decl)
+                      return
+                    }
+                    const name = decl.slice(0, colonIdx).trim()
+                    const value = decl.slice(colonIdx + 1).trim()
+
+                    if (name.toLowerCase() === property.toLowerCase()) {
+                      // Update this declaration (or remove if newValue is
+                      // null/empty). We intentionally don't compare the
+                      // previous text value so that changes from \"red\" to
+                      // \"rgba(...)\" still patch correctly.
+                      if (typeof newValue === 'string' && newValue.trim() !== '') {
+                        newDecls.push(`${name}: ${newValue}`)
+                      }
+                    } else {
+                      newDecls.push(decl)
+                    }
+                  })
+
+                  const newStyleContent = newDecls.join('; ')
+                  const newAttr = `style=${quoteChar}${newStyleContent}${quoteChar}`
+                  result += newAttr
+                  lastIndex = matchEnd
+                }
+
+                if (lastIndex > 0) {
+                  // Append any remaining content after the last style attribute
+                  result += workingPatched.slice(lastIndex)
+                  workingPatched = result
+                }
+              }
+
+              // If this change targets a specific element that *previously* had
+              // no inline style attribute in the source, we may still need to
+              // create style="..." from scratch. We use the live DOM snapshot
+              // to get the final inline style string, then inject or replace
+              // the style attribute on the matching start tag.
+              if (path && typeof newValue === 'string' && newValue.trim() !== '') {
+                try {
+                  const el = iframeDoc.querySelector(path) as HTMLElement | null
+                  if (el) {
+                    const liveStyle = (el.getAttribute('style') || '').trim()
+                    if (liveStyle) {
+                      const tagName = el.tagName.toLowerCase()
+                      const id = el.id || ''
+                      const classAttr = (el.getAttribute('class') || '').trim()
+
+                      const escapeRegExp = (s: string) =>
+                        s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+                      let pattern = `<\\s*${tagName}`
+
+                      if (id) {
+                        // Prefer id-based matching: it should be unique and
+                        // stable, and avoids touching other elements.
+                        pattern += `[^>]*\\bid\\s*=\\s*["']${escapeRegExp(id)}["']`
+                      } else if (classAttr) {
+                        // Fallback: anchor by exact class attribute string for
+                        // this tag. This will only ever update the *first*
+                        // matching tag in the source, so even if the class is
+                        // shared we won't apply the style to multiple elements.
+                        pattern += `[^>]*\\bclass\\s*=\\s*["']${escapeRegExp(classAttr)}["']`
+                      } else {
+                        // No id or class to anchor this element in the original
+                        // HTML; skip rather than risk a completely wrong match.
+                        continue
+                      }
+
+                      pattern += `[^>]*>`
+
+                      const re = new RegExp(pattern, 'i')
+                      const m = re.exec(workingPatched)
+                      if (m && m.index >= 0) {
+                        const start = m.index
+                        const end = start + m[0].length
+                        const originalTag = m[0]
+
+                        // If a style attribute already exists on this tag in the
+                        // source, replace its contents; otherwise, inject one.
+                        let newTag = originalTag
+                        const styleRe = /style\s*=\s*("([^"]*)"|'([^']*)')/i
+                        const sm = styleRe.exec(originalTag)
+                        if (sm) {
+                          const quoteChar = sm[1].startsWith('"') ? '"' : "'"
+                          newTag =
+                            originalTag.slice(0, sm.index) +
+                            `style=${quoteChar}${liveStyle}${quoteChar}` +
+                            originalTag.slice(sm.index + sm[0].length)
+                        } else {
+                          // Insert style attribute just before the closing ">"
+                          const gtIndex = originalTag.lastIndexOf('>')
+                          if (gtIndex !== -1) {
+                            const before = originalTag.slice(0, gtIndex)
+                            const after = originalTag.slice(gtIndex)
+                            newTag = `${before} style="${liveStyle}"${after}`
+                          }
+                        }
+
+                        if (newTag !== originalTag) {
+                          workingPatched =
+                            workingPatched.slice(0, start) +
+                            newTag +
+                            workingPatched.slice(end)
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                  // Best-effort only; if anything fails we leave workingPatched as-is.
+                }
+              }
+            }
+
+            patched = workingPatched
+          }
+
+          // Update any open editor tabs for this HTML file
+          matchingFiles.forEach((file) => {
+            editorState.updateFileContent(file.id, patched)
+          })
+
+          // Persist patched HTML both to the local sync folder (for project search)
+          // and directly to the FTP server so the remote file stays authoritative.
+          const htmlRes = await electronAPI.localSaveFile(htmlRemotePath, patched)
+          if (!htmlRes.success || !htmlRes.path) {
+            const msg = htmlRes.error || 'Failed to save patched HTML to local sync folder'
+            editorState.setError(msg)
+            editorState.setStatusMessage(null)
+            return
+          }
+
+          const ftpHtmlRes = await electronAPI.ftpUploadFile(htmlRes.path, htmlRemotePath)
+          if (ftpHtmlRes.success) {
+            savedHtml = true
+            matchingFiles.forEach((file) => {
+              editorState.setFileDirty(file.id, false)
+            })
+            editorState.setStatusMessage(
+              `Saved inspector HTML changes to server and sync folder: ${htmlRemotePath}`
+            )
+            editorState.setError(null)
+          } else {
+            const msg =
+              ftpHtmlRes.error ||
+              'Patched HTML saved to local sync folder, but failed to sync to server'
+            editorState.setError(msg)
+            editorState.setStatusMessage(null)
+            return
+          }
+        }
       }
 
       // 2. Save external stylesheets that were modified via the inspector.
       // We serialize each same-origin stylesheet and write it to the
-      // corresponding remote path.
+      // corresponding local sync file. As with HTML, the user is responsible
+      // for running a normal Save & Sync in the editor to upload via FTP.
       const styleSheets: (CSSStyleSheet | null)[] = Array.from(
         iframeDoc.styleSheets || []
       ) as (CSSStyleSheet | null)[]
 
       const seenCssPaths = new Set<string>()
+
+      let savedAnyCss = false
 
       for (const sheet of styleSheets) {
         if (!sheet) continue
@@ -710,14 +943,26 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
         }
 
         const cssRes = await electronAPI.localSaveFile(remotePath, cssText)
-        if (!cssRes.success) {
-          const msg = cssRes.error || `Failed to save stylesheet to sync folder: ${remotePath}`
+        if (!cssRes.success || !cssRes.path) {
+          const msg =
+            cssRes.error || `Failed to save stylesheet to local sync folder: ${remotePath}`
           editorState.setError(msg)
           editorState.setStatusMessage(null)
           return
         }
 
-        // Update any open editor tabs for this CSS file.
+        const ftpCssRes = await electronAPI.ftpUploadFile(cssRes.path, remotePath)
+        if (!ftpCssRes.success) {
+          const msg =
+            ftpCssRes.error ||
+            `Stylesheet saved to local sync folder but failed to sync to server: ${remotePath}`
+          editorState.setError(msg)
+          editorState.setStatusMessage(null)
+          return
+        }
+
+        // Update any open editor tabs for this CSS file and mark them clean now
+        // that the changes are uploaded to the FTP server.
         const cssFiles = editorState.openFiles.filter(
           (f) => f.kind !== 'preview' && f.path === remotePath
         )
@@ -725,6 +970,14 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           editorState.updateFileContent(file.id, cssText)
           editorState.setFileDirty(file.id, false)
         })
+        savedAnyCss = true
+      }
+
+      if (!savedHtml && savedAnyCss) {
+        editorState.setStatusMessage(
+          'Saved inspector stylesheet changes to server and sync folder'
+        )
+        editorState.setError(null)
       }
     } catch (err) {
       console.error('Failed to save inspector changes:', err)

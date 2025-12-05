@@ -186,6 +186,10 @@ const rgbToHex = (r: number, g: number, b: number): string => {
 
 const parseColor = (value: string): { hex: string; alpha: number } => {
   const v = (value || '').trim()
+  if (!v) {
+    return { hex: '#ffffff', alpha: 1 }
+  }
+
   // Simple hex
   if (v.startsWith('#')) {
     const rgb = hexToRgb(v)
@@ -193,8 +197,11 @@ const parseColor = (value: string): { hex: string; alpha: number } => {
       return { hex: rgbToHex(rgb.r, rgb.g, rgb.b), alpha: 1 }
     }
   }
+
   // rgb/rgba()
-  const m = v.match(/rgba?\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)/i)
+  const m = v.match(
+    /rgba?\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)/i
+  )
   if (m) {
     const r = parseFloat(m[1])
     const g = parseFloat(m[2])
@@ -205,6 +212,37 @@ const parseColor = (value: string): { hex: string; alpha: number } => {
     }
     return { hex: rgbToHex(r, g, b), alpha: a }
   }
+
+  // Let the browser parse named colors and other valid CSS color syntaxes.
+  // This runs only in the renderer (there is a DOM available).
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    try {
+      const el = document.createElement('div')
+      el.style.color = v
+      // If the browser does not understand the color, computed color will be
+      // an empty string or unchanged default.
+      document.body.appendChild(el)
+      const computed = window.getComputedStyle(el).color || ''
+      document.body.removeChild(el)
+
+      const m2 = computed.match(
+        /rgba?\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)/i
+      )
+      if (m2) {
+        const r = parseFloat(m2[1])
+        const g = parseFloat(m2[2])
+        const b = parseFloat(m2[3])
+        const a = m2[4] !== undefined ? clamp01(parseFloat(m2[4])) : 1
+        if ([r, g, b].some((n) => Number.isNaN(n))) {
+          return { hex: '#ffffff', alpha: 1 }
+        }
+        return { hex: rgbToHex(r, g, b), alpha: a }
+      }
+    } catch {
+      // Ignore and fall through to default
+    }
+  }
+
   // Fallback
   return { hex: '#ffffff', alpha: 1 }
 }
@@ -275,12 +313,29 @@ interface InspectPanelProps {
     kind?: 'text' | 'html'
   } | null
   resetChangesToken?: number
-  /**
-   * Invoked when the user clicks the "Save to files" button in the Changes tab.
-   * The parent component is responsible for persisting the current DOM/CSS
-   * state back to the appropriate local files.
-   */
-  onSaveChanges?: () => void
+      /**
+       * Invoked when the user clicks the "Save to files" button in the Changes tab.
+       * The parent component is responsible for persisting the current DOM/CSS
+       * state back to the appropriate remote FTP files (and their local sync copies).
+       *
+       * - `textChanges` captures innerText / innerHTML edits.
+       * - `inlineStyleChanges` captures `element.style` edits so the parent can
+       *   patch only the affected elements instead of rewriting the whole page.
+       */
+  onSaveChanges?: (payload: {
+    textChanges: {
+      path: string
+      oldText: string
+      newText: string
+      kind?: 'text' | 'html'
+    }[]
+    inlineStyleChanges?: {
+      path: string
+      property: string
+      oldValue: string | null
+      newValue: string | null
+    }[]
+  }) => void
 }
 
 const InspectPanel: React.FC<InspectPanelProps> = ({
@@ -1248,7 +1303,68 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
             <button
               type="button"
               className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-default"
-              onClick={() => onSaveChanges()}
+              onClick={() => {
+                if (!onSaveChanges) return
+                const textByPath = new Map<
+                  string,
+                  { path: string; oldText: string; newText: string; kind?: 'text' | 'html' }
+                >()
+                const inlineByPathProp = new Map<
+                  string,
+                  {
+                    path: string
+                    property: string
+                    oldValue: string | null
+                    newValue: string | null
+                  }
+                >()
+
+                changes.forEach((change) => {
+                  if (change.active === false) return
+
+                  // Aggregate text content edits (innerText / innerHTML)
+                  if (change.scope === 'text' && change.type === 'set' && change.elementPath) {
+                    if (typeof change.newValue === 'string') {
+                      const path = change.elementPath
+                      const oldText =
+                        typeof change.oldValue === 'string' ? change.oldValue : ''
+                      const newText = change.newValue || ''
+                      textByPath.set(path, {
+                        path,
+                        oldText,
+                        newText,
+                        kind: change.contentKind
+                      })
+                    }
+                    return
+                  }
+
+                  // Aggregate element.style inline edits
+                  if (
+                    change.scope === 'inline' &&
+                    change.elementPath &&
+                    typeof change.property === 'string'
+                  ) {
+                    const key = `${change.elementPath}::${change.property}`
+                    const oldValue =
+                      typeof change.oldValue === 'string' ? change.oldValue : null
+                    const newValue =
+                      typeof change.newValue === 'string' ? change.newValue : null
+
+                    inlineByPathProp.set(key, {
+                      path: change.elementPath,
+                      property: change.property,
+                      oldValue,
+                      newValue
+                    })
+                  }
+                })
+
+                onSaveChanges({
+                  textChanges: Array.from(textByPath.values()),
+                  inlineStyleChanges: Array.from(inlineByPathProp.values())
+                })
+              }}
               disabled={changes.length === 0}
             >
               Save to files
