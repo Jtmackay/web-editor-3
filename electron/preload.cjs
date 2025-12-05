@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('db-set-active-file', userId, filePath, fileHash ?? null),
   dbRemoveActiveFile: (userId, filePath) => ipcRenderer.invoke('db-remove-active-file', userId, filePath),
   dbGetOrCreateDefaultUser: () => ipcRenderer.invoke('db-get-or-create-default-user'),
+  dbGetOrCreateUserByName: (username) => ipcRenderer.invoke('db-get-or-create-user-by-name', username),
   dbGetFTPConnections: (userId) => ipcRenderer.invoke('db-get-ftp-connections', userId),
   dbAddFTPConnection: (payload) => ipcRenderer.invoke('db-add-ftp-connection', payload),
   dbRemoveFTPConnection: (payload) => ipcRenderer.invoke('db-remove-ftp-connection', payload),
@@ -77,6 +78,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsSetPreviewBaseUrl: (baseUrl) => ipcRenderer.invoke('settings-set-preview-base-url', baseUrl),
   settingsGetPreviewStartAfter: () => ipcRenderer.invoke('settings-get-preview-start-after'),
   settingsSetPreviewStartAfter: (startAfter) => ipcRenderer.invoke('settings-set-preview-start-after', startAfter),
+  settingsGetEditorName: () => ipcRenderer.invoke('settings-get-editor-name'),
+  settingsSetEditorName: (name) => ipcRenderer.invoke('settings-set-editor-name', name),
 
   projectSearch: (payload) => ipcRenderer.invoke('project-search', payload),
 

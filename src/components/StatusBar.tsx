@@ -1,7 +1,7 @@
 import React from 'react'
 import { useEditorStore } from '../stores/editorStore'
 import { useFTPStore } from '../stores/ftpStore'
-import { FileText, Users, GitBranch } from 'lucide-react'
+import { FileText, Users } from 'lucide-react'
 import { electronAPI } from '../utils/electronAPI'
 
 const StatusBar: React.FC = () => {
@@ -23,11 +23,14 @@ const StatusBar: React.FC = () => {
       }
       const res = await electronAPI.dbGetActiveFiles()
       if (!res.success || !res.files) {
-        setOtherEditors([])
+        // Keep the last known value on transient errors to avoid flicker.
         return
       }
       const others = res.files.filter(
-        (f: any) => f.file_path === currentFile.path && f.user_id !== currentUserId,
+        (f: any) =>
+          f.file_path === currentFile.path &&
+          f.user_id !== currentUserId &&
+          f.username !== 'local',
       )
       setOtherEditors(others)
     }

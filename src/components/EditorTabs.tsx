@@ -6,11 +6,53 @@ import { electronAPI } from '../utils/electronAPI'
 const EditorTabs: React.FC = () => {
   const { openFiles, activeFile, closeFile, setActiveFile } = useEditorStore()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: EditorFile } | null>(null)
+  const [presenceByPath, setPresenceByPath] = useState<Record<string, string[]>>({})
 
   useEffect(() => {
     const handleGlobalClick = () => setContextMenu(null)
     window.addEventListener('click', handleGlobalClick)
     return () => window.removeEventListener('click', handleGlobalClick)
+  }, [])
+
+  useEffect(() => {
+    let interval: number | undefined
+
+    const loadPresence = async () => {
+      const state = useEditorStore.getState()
+      const uid = state.currentUserId
+      const files = state.openFiles
+      if (!uid || files.length === 0) {
+        setPresenceByPath({})
+        return
+      }
+      const res = await electronAPI.dbGetActiveFiles()
+      if (!res.success || !res.files) {
+        // Keep the last known snapshot on transient errors.
+        return
+      }
+      const map: Record<string, string[]> = {}
+      for (const row of res.files as any[]) {
+        if (!row) continue
+        if (row.user_id === uid) continue
+        if (row.username === 'local') continue
+        const path = row.file_path || ''
+        if (!path) continue
+        if (!map[path]) {
+          map[path] = []
+        }
+        map[path].push(row.username || `User #${row.user_id}`)
+      }
+      setPresenceByPath(map)
+    }
+
+    loadPresence()
+    interval = window.setInterval(loadPresence, 5000)
+
+    return () => {
+      if (interval) {
+        window.clearInterval(interval)
+      }
+    }
   }, [])
 
   const buildPreviewUrlForPath = async (rawPath: string): Promise<string | null> => {
@@ -237,6 +279,9 @@ const EditorTabs: React.FC = () => {
             setContextMenu({ x: e.clientX, y: e.clientY, file })
           }}
         >
+          {(!file.kind || file.kind === 'code') && presenceByPath[file.path]?.length > 0 && (
+            <div className="w-2 h-2 bg-red-500 rounded-full" title="Another editor has this file open" />
+          )}
           <span className="text-sm">{file.name}</span>
           {file.isDirty && (
             <div className="w-2 h-2 bg-orange-500 rounded-full" />

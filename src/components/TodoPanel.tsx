@@ -168,8 +168,9 @@ const TodoPanel: React.FC = () => {
 
   const items: TodoItem[] = useMemo(() => {
     return Object.entries(fileStatuses || {})
-      .filter(([_, status]): status is FileStatus => !!status)
-      .map(([path, status]) => {
+      .map(([path, status]) => ({ path, status }))
+      .filter((entry): entry is { path: string; status: FileStatus } => !!entry.status)
+      .map(({ path, status }) => {
         const normalized = String(path || '').replace(/\\/g, '/')
         const parts = normalized.split('/').filter(Boolean)
         const name = parts[parts.length - 1] || normalized || path
@@ -198,11 +199,11 @@ const TodoPanel: React.FC = () => {
 
       try {
         const dl = await electronAPI.ftpDownloadFile(item.path, undefined as any)
-        if (!dl.success || typeof dl.content !== 'string') {
-          setError(dl.error || 'Failed to open file from FTP')
+        if (!dl.success || typeof (dl as any).content !== 'string') {
+          setError((dl as any).error || 'Failed to open file from FTP')
           return
         }
-        const content = dl.content
+        const content = (dl as any).content as string
         const editorFile = {
           id: item.path,
           path: item.path,

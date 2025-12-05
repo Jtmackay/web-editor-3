@@ -1190,7 +1190,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                         <input
                           data-role="add-rule-value"
                           list="css-value-suggestions"
-                          className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] px-1"
+                      className="flex-1 bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none text-[#ce9178] px-1"
                           placeholder="value"
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {

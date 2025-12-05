@@ -76,11 +76,11 @@ const SearchPanel: React.FC = () => {
 
       try {
         const dl = await electronAPI.ftpDownloadFile(remotePath, undefined as any)
-        if (!dl.success || typeof dl.content !== 'string') {
-          setError(dl.error || 'Failed to open file from FTP')
+        if (!dl.success || typeof (dl as any).content !== 'string') {
+          setError((dl as any).error || 'Failed to open file from FTP')
           return
         }
-        const content = dl.content
+        const content = (dl as any).content as string
         const editorFile = {
           id: remotePath,
           path: remotePath,

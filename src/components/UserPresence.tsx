@@ -9,7 +9,10 @@ const UserPresence: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       const u = await electronAPI.dbGetUsers()
-      if (u.success && u.users) setUsers(u.users)
+      if (u.success && u.users) {
+        // Hide legacy/default 'local' user entries from the presence list.
+        setUsers(u.users.filter((user: any) => user.username !== 'local'))
+      }
       const af = await electronAPI.dbGetActiveFiles()
       if (af.success && af.files) setActiveFiles(af.files)
     }

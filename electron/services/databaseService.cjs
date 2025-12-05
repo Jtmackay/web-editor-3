@@ -68,7 +68,20 @@ class DatabaseService {
     } catch (error) { throw error }
   }
   async getOrCreateDefaultUser() {
-    try { const existing = await this.pool.query('SELECT * FROM users WHERE username = $1', ['local']); if (existing.rows.length > 0) { this.currentUser = existing.rows[0]; return this.currentUser } const created = await this.pool.query('INSERT INTO users (username) VALUES ($1) RETURNING *', ['local']); this.currentUser = created.rows[0]; return this.currentUser } catch (error) { throw error }
+    try {
+      return await this.getOrCreateUserByName('local')
+    } catch (error) { throw error }
+  }
+  async getOrCreateUserByName(username) {
+    const name = String(username || '').trim() || 'local'
+    const existing = await this.pool.query('SELECT * FROM users WHERE username = $1', [name])
+    if (existing.rows.length > 0) {
+      this.currentUser = existing.rows[0]
+      return this.currentUser
+    }
+    const created = await this.pool.query('INSERT INTO users (username) VALUES ($1) RETURNING *', [name])
+    this.currentUser = created.rows[0]
+    return this.currentUser
   }
   async getUsers() { const result = await this.pool.query('SELECT * FROM users ORDER BY username'); return result.rows }
   async updateUserStatus(userId, status) { const q = `UPDATE users SET status = $1, last_seen = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`; const result = await this.pool.query(q, [status, userId]); return result.rows[0] }

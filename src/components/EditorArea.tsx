@@ -754,7 +754,6 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
                       return
                     }
                     const name = decl.slice(0, colonIdx).trim()
-                    const value = decl.slice(colonIdx + 1).trim()
 
                     if (name.toLowerCase() === property.toLowerCase()) {
                       // Update this declaration (or remove if newValue is
