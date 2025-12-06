@@ -162,7 +162,6 @@ const SettingsPanel: React.FC = () => {
   const [hideIgnoredInExplorer, setHideIgnoredInExplorer] = useState(false)
   const [hiddenIgnorePatterns, setHiddenIgnorePatterns] = useState<string[]>([])
   const [newIgnorePattern, setNewIgnorePattern] = useState('')
-  const [editorName, setEditorName] = useState('')
   const [dbHost, setDbHost] = useState('')
   const [dbPort, setDbPort] = useState<number | string>('')
   const [dbName, setDbName] = useState('')
@@ -175,13 +174,12 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes] = await Promise.all([
+        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes] = await Promise.all([
           electronAPI.settingsGetSyncFolder(),
           electronAPI.settingsGetPreviewBaseUrl(),
           electronAPI.settingsGetPreviewStartAfter(),
           electronAPI.settingsGetSyncIgnore(),
-          electronAPI.settingsGetDbConfig(),
-          electronAPI.settingsGetEditorName()
+          electronAPI.settingsGetDbConfig()
         ])
         if (mounted && syncRes.success && typeof syncRes.path === 'string') {
           setSyncFolder(syncRes.path)
@@ -209,9 +207,6 @@ const SettingsPanel: React.FC = () => {
           setDbName(dbRes.config.database || '')
           setDbUser(dbRes.config.user || '')
           setDbPassword(dbRes.config.password || '')
-        }
-        if (mounted && editorNameRes.success && typeof editorNameRes.name === 'string') {
-          setEditorName(editorNameRes.name)
         }
       } catch (err) {
         console.error('Failed to load sync folder', err)
@@ -261,7 +256,7 @@ const SettingsPanel: React.FC = () => {
     }
     setSaving(true)
     try {
-      const [syncRes, baseUrlRes, startAfterRes, dbRes, editorNameRes] = await Promise.all([
+      const [syncRes, baseUrlRes, startAfterRes, dbRes] = await Promise.all([
         electronAPI.settingsSetSyncFolder(syncFolder.trim()),
         electronAPI.settingsSetPreviewBaseUrl(previewBaseUrl.trim()),
         electronAPI.settingsSetPreviewStartAfter(previewStartAfter.trim()),
@@ -271,8 +266,7 @@ const SettingsPanel: React.FC = () => {
           database: dbName.trim() || 'vscode_editor',
           user: dbUser.trim() || 'postgres',
           password: dbPassword
-        }),
-        electronAPI.settingsSetEditorName(editorName.trim())
+        })
       ])
       if (!syncRes.success) {
         setError(syncRes.error || 'Failed to save sync folder')
@@ -282,8 +276,6 @@ const SettingsPanel: React.FC = () => {
         setError(startAfterRes.error || 'Failed to save preview start-after path')
       } else if (!dbRes.success) {
         setError(dbRes.error || 'Failed to save database settings')
-      } else if (!editorNameRes.success) {
-        setError(editorNameRes.error || 'Failed to save editor name')
       } else {
         setStatus('Settings saved')
       }
@@ -297,26 +289,6 @@ const SettingsPanel: React.FC = () => {
 
   return (
     <div className="p-4 text-sm text-vscode-text space-y-4">
-      <section>
-        <h4 className="font-semibold mb-1">Editor profile</h4>
-        <p className="text-vscode-text-muted mb-2">
-          Set the name that other editors will see in presence indicators (for example, when you have
-          a file open).
-        </p>
-        <div className="flex gap-2 mb-2">
-          <input
-            type="text"
-            value={editorName}
-            onChange={(e) => setEditorName(e.target.value)}
-            className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
-            placeholder="e.g. Alice, Bob"
-          />
-        </div>
-        <p className="text-xs text-vscode-text-muted">
-          This only affects how you appear to others. Database credentials are configured separately
-          below.
-        </p>
-      </section>
       <section>
         <h4 className="font-semibold mb-1">FTP Sync</h4>
         <p className="text-vscode-text-muted mb-2">

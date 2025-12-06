@@ -2,6 +2,7 @@ import React from 'react'
 import AppLayout from './components/AppLayout'
 import { electronAPI } from './utils/electronAPI'
 import { useEditorStore } from './stores/editorStore'
+import { useFTPStore } from './stores/ftpStore'
 
 function App() {
   const { setCurrentUserId } = useEditorStore()
@@ -35,14 +36,7 @@ function App() {
     }
 
     const init = async () => {
-      // Load the configured editor name from settings; fall back to "local" if empty.
-      const editorNameRes = await electronAPI.settingsGetEditorName()
-      const rawName = editorNameRes.success && editorNameRes.name
-        ? String(editorNameRes.name).trim()
-        : ''
-      const effectiveName = rawName || 'local'
-
-      const u = await electronAPI.dbGetOrCreateUserByName(effectiveName)
+      const u = await electronAPI.dbGetOrCreateDefaultUser()
       if (u.success && u.user?.id) {
           userId = u.user.id
           setCurrentUserId(u.user.id)

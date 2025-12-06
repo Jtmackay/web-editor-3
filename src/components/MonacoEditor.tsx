@@ -79,7 +79,7 @@ const MonacoEditor: React.FC = () => {
           formatOnType: true,
           suggestOnTriggerCharacters: true,
           quickSuggestions: true,
-          wordBasedSuggestions: 'allDocuments',
+          wordBasedSuggestions: true,
           parameterHints: { enabled: true },
           hover: { enabled: true },
           folding: true,

@@ -46,10 +46,13 @@ const FTPExplorer: React.FC = () => {
   const [folderChildren, setFolderChildren] = useState<Record<string, FTPFile[]>>({})
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({})
   const [showConnectionDialog, setShowConnectionDialog] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState(false)
   const [savedConnections, setSavedConnections] = useState<any[]>([])
   const inFlightRef = useRef<Set<string>>(new Set())
   const queueRef = useRef<Promise<void>>(Promise.resolve())
   const blockedRef = useRef<Set<string>>(new Set())
+  const clickTimerRef = useRef<number | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncCount, setSyncCount] = useState<number | null>(null)
   const [syncIgnorePatterns, setSyncIgnorePatterns] = useState<string[]>([])
@@ -428,6 +431,46 @@ const FTPExplorer: React.FC = () => {
     loadConnections()
   }, [showConnectionDialog])
 
+  const loadFiles = async (overridePath?: string) => {
+    if (!isConnected) return
+    if (useFTPStore.getState().isLoading) return
+    if (Object.values(loadingChildren).some(Boolean)) return
+    setLoading(true)
+    setError(null)
+    try {
+      const targetPath = overridePath || currentPath || '/'
+      console.log('FTPExplorer loadFiles', { targetPath })
+      const res = await runQueued(() => electronAPI.ftpListFiles(targetPath))
+      if (res.success && res.files) {
+        console.log('FTPExplorer loadFiles success', { count: res.files.length })
+        const mapped: FTPFile[] = res.files.map((item: any) => {
+          const fallbackType: 'file' | 'directory' = item && item.isDirectory === true ? 'directory' : 'file'
+          return {
+            name: item.name,
+            path: item.path,
+            type: normalizeFileType(item.type, fallbackType),
+            size: Number(item.size ?? 0) || 0,
+            modified: item.modified ? new Date(item.modified) : (item.modifiedAt ? new Date(item.modifiedAt) : new Date())
+          }
+        })
+        setFiles(mapped)
+      } else {
+        console.error('FTPExplorer loadFiles failed', res.error)
+        setError(res.error || 'Failed to load files')
+      }
+    } catch (err) {
+      console.error('FTPExplorer loadFiles error', err)
+      setError('Failed to load files')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const changeDirectory = async (path: string) => {
+    console.log('FTPExplorer changeDirectory', { path })
+    useFTPStore.getState().setCurrentPath(path)
+  }
+
   const openFile = async (file: FTPFile) => {
     console.log('FTPExplorer openFile click', { file })
     if (isDirectoryEntry(file.type)) {
@@ -533,6 +576,47 @@ const FTPExplorer: React.FC = () => {
           setLoadingChildren((prev) => ({ ...prev, [file.path]: false }))
           inFlightRef.current.delete(file.path)
         }
+      }
+    }
+  }
+
+  const expandFolder = async (file: FTPFile) => {
+    if (inFlightRef.current.has(file.path)) return
+    if (expandedFolders.has(file.path)) return
+    const next = new Set(expandedFolders)
+    next.add(file.path)
+    setExpandedFolders(next)
+    console.log('FTPExplorer folder expand (double-click only)', { path: file.path })
+    if (!folderChildren[file.path]) {
+      if (loadingChildren[file.path]) return
+      inFlightRef.current.add(file.path)
+      setLoadingChildren((prev) => ({ ...prev, [file.path]: true }))
+      try {
+        console.log('FTPExplorer loadChildren start (double-click)', { path: file.path })
+        const res = await runQueued(() => electronAPI.ftpListFiles(file.path))
+        if (res.success && res.files) {
+          const mapped: FTPFile[] = res.files.map((item: any) => {
+            const fallbackType: 'file' | 'directory' = item && item.isDirectory === true ? 'directory' : 'file'
+            return {
+              name: item.name,
+              path: item.path,
+              type: normalizeFileType(item.type, fallbackType),
+              size: Number(item.size ?? 0) || 0,
+              modified: item.modified ? new Date(item.modified) : (item.modifiedAt ? new Date(item.modifiedAt) : new Date())
+            }
+          })
+          setFolderChildren((prev) => ({ ...prev, [file.path]: mapped }))
+          console.log('FTPExplorer loadChildren success (double-click)', { path: file.path, count: mapped.length })
+        } else {
+          console.error('FTPExplorer loadChildren failed (double-click)', res.error)
+          setError(res.error || 'Failed to load folder')
+        }
+      } catch (err) {
+        console.error('FTPExplorer loadChildren error (double-click)', err)
+        setError('Failed to load folder')
+      } finally {
+        setLoadingChildren((prev) => ({ ...prev, [file.path]: false }))
+        inFlightRef.current.delete(file.path)
       }
     }
   }
@@ -909,7 +993,7 @@ const FTPConnectionDialog: React.FC<FTPConnectionDialogProps> = ({ onClose }) =>
   const [connectError, setConnectError] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
   const hasElectron = typeof (window as any).electronAPI !== 'undefined'
-  const [, setLoadingSaved] = useState(false)
+  const [loadingSaved, setLoadingSaved] = useState(false)
   const [saved, setSaved] = useState<any[]>([])
 
   useEffect(() => {

@@ -23,7 +23,6 @@ declare global {
       dbSetActiveFile: (userId: string, filePath: string, fileHash?: string | null) => Promise<{ success: boolean; error?: string }>
       dbRemoveActiveFile: (userId: string, filePath: string) => Promise<{ success: boolean; error?: string }>
       dbGetOrCreateDefaultUser: () => Promise<{ success: boolean; user?: any; error?: string }>
-      dbGetOrCreateUserByName: (username: string) => Promise<{ success: boolean; user?: any; error?: string }>
       dbGetFTPConnections: (userId: number) => Promise<{ success: boolean; connections?: any[]; error?: string }>
       dbAddFTPConnection: (payload: { userId: number; name: string; host: string; port: number; username: string; password: string; defaultPath: string }) => Promise<{ success: boolean; connection?: any; error?: string }>
       dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => Promise<{ success: boolean; removed?: any; error?: string }>
@@ -45,8 +44,6 @@ declare global {
 
       settingsGetDbConfig: () => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
       settingsSetDbConfig: (config: { host: string; port: number; database: string; user: string; password: string }) => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
-      settingsGetEditorName: () => Promise<{ success: boolean; name?: string; error?: string }>
-      settingsSetEditorName: (name: string) => Promise<{ success: boolean; name?: string; error?: string }>
 
       localSaveFile: (remotePath: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>
 
@@ -102,9 +99,6 @@ export const electronAPI = {
     Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbRemoveActiveFile: (userId: string, filePath: string) => window.electronAPI?.dbRemoveActiveFile(userId, filePath) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetOrCreateDefaultUser: () => window.electronAPI?.dbGetOrCreateDefaultUser() || Promise.resolve({ success: false, error: 'Electron API not available' }),
-  dbGetOrCreateUserByName: (username: string) =>
-    window.electronAPI?.dbGetOrCreateUserByName(username) ||
-    Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetFTPConnections: (userId: number) => window.electronAPI?.dbGetFTPConnections(userId) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbAddFTPConnection: (payload: { userId: number; name: string; host: string; port: number; username: string; password: string; defaultPath: string }) => window.electronAPI?.dbAddFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => window.electronAPI?.dbRemoveFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
@@ -179,18 +173,6 @@ export const electronAPI = {
     password: string
   }) =>
     window.electronAPI?.settingsSetDbConfig(config) ||
-    Promise.resolve({
-      success: false,
-      error: 'Electron API not available'
-    }),
-  settingsGetEditorName: () =>
-    window.electronAPI?.settingsGetEditorName() ||
-    Promise.resolve({
-      success: false,
-      error: 'Electron API not available'
-    }),
-  settingsSetEditorName: (name: string) =>
-    window.electronAPI?.settingsSetEditorName(name) ||
     Promise.resolve({
       success: false,
       error: 'Electron API not available'

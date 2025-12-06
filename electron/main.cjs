@@ -256,14 +256,6 @@ function setupIPC() {
   ipcMain.handle('db-get-or-create-default-user', async () => {
     try { const user = await databaseService.getOrCreateDefaultUser(); return { success: true, user } } catch (error) { return { success: false, error: error.message } }
   })
-  ipcMain.handle('db-get-or-create-user-by-name', async (_event, username) => {
-    try {
-      const user = await databaseService.getOrCreateUserByName(username)
-      return { success: true, user }
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  })
   ipcMain.handle('db-get-ftp-connections', async (event, userId) => {
     try { const cons = await databaseService.getFTPConnections(userId); return { success: true, connections: cons } } catch (error) { return { success: false, error: error.message } }
   })
@@ -358,22 +350,6 @@ function setupIPC() {
     try {
       const saved = settingsService.setPreviewStartAfter(startAfter)
       return { success: true, startAfter: saved }
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  })
-  ipcMain.handle('settings-get-editor-name', async () => {
-    try {
-      const name = settingsService.getEditorName()
-      return { success: true, name }
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  })
-  ipcMain.handle('settings-set-editor-name', async (_event, name) => {
-    try {
-      const saved = settingsService.setEditorName(name)
-      return { success: true, name: saved }
     } catch (error) {
       return { success: false, error: error.message }
     }

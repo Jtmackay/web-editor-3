@@ -73,14 +73,6 @@ class SettingsService {
     this.store.set('previewStartAfter', normalized)
     return normalized
   }
-  getEditorName() {
-    return this.store.get('editorName', '')
-  }
-  setEditorName(name) {
-    const normalized = name ? String(name).trim() : ''
-    this.store.set('editorName', normalized)
-    return normalized
-  }
 }
 
 module.exports = { SettingsService }
