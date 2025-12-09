@@ -78,6 +78,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsGetPreviewStartAfter: () => ipcRenderer.invoke('settings-get-preview-start-after'),
   settingsSetPreviewStartAfter: (startAfter) => ipcRenderer.invoke('settings-set-preview-start-after', startAfter),
 
+  settingsGetEditorName: () => ipcRenderer.invoke('settings-get-editor-name'),
+  settingsSetEditorName: (name) => ipcRenderer.invoke('settings-set-editor-name', name),
+
+  settingsGetEnablePreviewInspector: () => ipcRenderer.invoke('settings-get-enable-preview-inspector'),
+  settingsSetEnablePreviewInspector: (enabled) => ipcRenderer.invoke('settings-set-enable-preview-inspector', enabled),
+
   projectSearch: (payload) => ipcRenderer.invoke('project-search', payload),
 
   localSaveFile: (remotePath, content) => ipcRenderer.invoke('local-save-file', remotePath, content),

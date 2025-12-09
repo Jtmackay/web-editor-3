@@ -16,16 +16,7 @@ app.commandLine.appendSwitch('disable-web-security')
 app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors')
 app.commandLine.appendSwitch('disable-site-isolation-trials')
 
-// Try to force-enable GPU acceleration even on machines that Chromium would
-// normally block (old drivers, remote sessions, etc.). If this causes crashes
-// on some systems, you can comment these out or guard them by an env flag.
-app.commandLine.appendSwitch('ignore-gpu-blocklist')
-app.commandLine.appendSwitch('enable-gpu-rasterization')
-app.commandLine.appendSwitch('enable-zero-copy')
-// Prefer ANGLE / Direct3D like Chrome does on Windows.
-app.commandLine.appendSwitch('use-angle', 'd3d11')
-app.commandLine.appendSwitch('use-gl', 'angle')
-app.commandLine.appendSwitch('enable-webgl')
+
 
 let mainWindow
 let ftpService
@@ -39,6 +30,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    icon: path.join(__dirname, '../assets/editor.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -46,9 +38,11 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       // Allow the renderer to inspect cross-origin preview content inside iframes.
       // This is safe here because this is a desktop app with trusted content.
-      webSecurity: false
+      webSecurity: false,
+      backgroundThrottling: false
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    ...(process.platform === 'darwin' ? { titleBarOverlay: { color: '#0b0b0b', symbolColor: '#ffffff', height: 32 } } : {}),
     show: false
   })
 
@@ -65,9 +59,7 @@ function createWindow() {
       mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
     })
   })
-  if (isDev) {
-    mainWindow.webContents.openDevTools()
-  }
+  
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
@@ -346,10 +338,42 @@ function setupIPC() {
       return { success: false, error: error.message }
     }
   })
+  ipcMain.handle('settings-get-editor-name', async () => {
+    try {
+      const name = settingsService.getEditorName()
+      return { success: true, name }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-set-editor-name', async (_event, name) => {
+    try {
+      const saved = settingsService.setEditorName(name)
+      return { success: true, name: saved.name }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
   ipcMain.handle('settings-set-preview-start-after', async (_event, startAfter) => {
     try {
       const saved = settingsService.setPreviewStartAfter(startAfter)
       return { success: true, startAfter: saved }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-get-enable-preview-inspector', async () => {
+    try {
+      const enabled = settingsService.getEnablePreviewInspector()
+      return { success: true, enabled }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-set-enable-preview-inspector', async (_event, enabled) => {
+    try {
+      const saved = settingsService.setEnablePreviewInspector(enabled)
+      return { success: true, enabled: saved }
     } catch (error) {
       return { success: false, error: error.message }
     }

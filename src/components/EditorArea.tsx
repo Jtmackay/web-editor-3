@@ -42,8 +42,21 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
   const textChangeTokenRef = useRef(0)
   const [resetChangesToken, setResetChangesToken] = useState(0)
   const scrollPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [allowInspector, setAllowInspector] = useState(false)
 
   useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const res = await electronAPI.settingsGetEnablePreviewInspector()
+        if (mounted && res.success) setAllowInspector(!!res.enabled)
+      } catch {}
+    })()
+    return () => { mounted = false }
+  }, [])
+
+  useEffect(() => {
+    if (!allowInspector) return
     const iframe = iframeRef.current
     if (!iframe) return
 
@@ -328,7 +341,7 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       window.removeEventListener('message', handleMessage)
       window.removeEventListener('click', handleClick)
     }
-  }, [])
+  }, [allowInspector])
 
   // When the preview tab becomes inactive, ask the iframe to report its scroll
   // position. When it becomes active again, restore the last known position.
@@ -1258,7 +1271,7 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           </div>
         )}
       </div>
-      {showInspect && (
+      {showInspect && allowInspector && (
         <InspectPanel
           selectedElement={selectedElement}
           onClose={() => setShowInspect(false)}
@@ -1337,7 +1350,7 @@ const EditorArea: React.FC = () => {
         ) : (
           <div className="flex items-center justify-center h-full text-vscode-text-muted">
             <div className="text-center">
-              <h2 className="text-xl mb-2">VSCode Editor</h2>
+              <h2 className="text-xl mb-2">Web Editor</h2>
               <p>Open a file from the FTP explorer to start editing</p>
             </div>
           </div>

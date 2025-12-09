@@ -73,7 +73,22 @@ class SettingsService {
     this.store.set('previewStartAfter', normalized)
     return normalized
   }
+  getEditorName() {
+    return this.store.get('editorName', '')
+  }
+  setEditorName(name) {
+    const normalized = name ? String(name).trim() : ''
+    this.store.set('editorName', normalized)
+    return { name: normalized }
+  }
+  getEnablePreviewInspector() {
+    return !!this.store.get('enablePreviewInspector', false)
+  }
+  setEnablePreviewInspector(enabled) {
+    const value = !!enabled
+    this.store.set('enablePreviewInspector', value)
+    return value
+  }
 }
 
 module.exports = { SettingsService }
-

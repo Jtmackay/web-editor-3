@@ -15,6 +15,10 @@
     background-color: #1e1e1e;
     color: #cccccc;
   }
+
+  .drag-region {
+    -webkit-app-region: drag;
+  }
 }
 
 @layer components {

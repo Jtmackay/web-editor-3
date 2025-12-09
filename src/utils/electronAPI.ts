@@ -42,6 +42,11 @@ declare global {
       settingsSetPreviewStartAfter: (startAfter: string) => Promise<{ success: boolean; startAfter?: string; error?: string }>
       openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
 
+      settingsGetEditorName: () => Promise<{ success: boolean; name?: string; error?: string }>
+      settingsSetEditorName: (name: string) => Promise<{ success: boolean; name?: string; error?: string }>
+      settingsGetEnablePreviewInspector: () => Promise<{ success: boolean; enabled?: boolean; error?: string }>
+      settingsSetEnablePreviewInspector: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>
+
       settingsGetDbConfig: () => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
       settingsSetDbConfig: (config: { host: string; port: number; database: string; user: string; password: string }) => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
 
@@ -155,6 +160,28 @@ export const electronAPI = {
     (window.electronAPI && typeof window.electronAPI.settingsSetPreviewStartAfter === 'function')
       ? window.electronAPI.settingsSetPreviewStartAfter(startAfter)
       : Promise.resolve<{ success: boolean; startAfter?: string; error?: string }>({
+          success: false,
+          error: 'Electron API not available'
+        }),
+  settingsGetEditorName: (): Promise<{ success: boolean; name?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsGetEditorName === 'function')
+      ? window.electronAPI.settingsGetEditorName()
+      : Promise.resolve<{ success: boolean; name?: string; error?: string }>({ success: true, name: '' }),
+  settingsSetEditorName: (name: string): Promise<{ success: boolean; name?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsSetEditorName === 'function')
+      ? window.electronAPI.settingsSetEditorName(name)
+      : Promise.resolve<{ success: boolean; name?: string; error?: string }>({
+          success: false,
+          error: 'Electron API not available'
+        }),
+  settingsGetEnablePreviewInspector: (): Promise<{ success: boolean; enabled?: boolean; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsGetEnablePreviewInspector === 'function')
+      ? window.electronAPI.settingsGetEnablePreviewInspector()
+      : Promise.resolve<{ success: boolean; enabled?: boolean; error?: string }>({ success: true, enabled: false }),
+  settingsSetEnablePreviewInspector: (enabled: boolean): Promise<{ success: boolean; enabled?: boolean; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsSetEnablePreviewInspector === 'function')
+      ? window.electronAPI.settingsSetEnablePreviewInspector(enabled)
+      : Promise.resolve<{ success: boolean; enabled?: boolean; error?: string }>({
           success: false,
           error: 'Electron API not available'
         }),

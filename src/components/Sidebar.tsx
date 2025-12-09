@@ -163,6 +163,7 @@ const SettingsPanel: React.FC = () => {
   const [hiddenIgnorePatterns, setHiddenIgnorePatterns] = useState<string[]>([])
   const [newIgnorePattern, setNewIgnorePattern] = useState('')
   const [editorName, setEditorName] = useState('')
+  const [enablePreviewInspector, setEnablePreviewInspector] = useState(false)
   const [dbHost, setDbHost] = useState('')
   const [dbPort, setDbPort] = useState<number | string>('')
   const [dbName, setDbName] = useState('')
@@ -175,13 +176,14 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes] = await Promise.all([
+        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes, inspectorRes] = await Promise.all([
           electronAPI.settingsGetSyncFolder(),
           electronAPI.settingsGetPreviewBaseUrl(),
           electronAPI.settingsGetPreviewStartAfter(),
           electronAPI.settingsGetSyncIgnore(),
           electronAPI.settingsGetDbConfig(),
-          electronAPI.settingsGetEditorName()
+          electronAPI.settingsGetEditorName(),
+          electronAPI.settingsGetEnablePreviewInspector()
         ])
         if (mounted && syncRes.success && typeof syncRes.path === 'string') {
           setSyncFolder(syncRes.path)
@@ -212,6 +214,9 @@ const SettingsPanel: React.FC = () => {
         }
         if (mounted && editorNameRes.success && typeof editorNameRes.name === 'string') {
           setEditorName(editorNameRes.name)
+        }
+        if (mounted && inspectorRes.success && typeof inspectorRes.enabled === 'boolean') {
+          setEnablePreviewInspector(!!inspectorRes.enabled)
         }
       } catch (err) {
         console.error('Failed to load sync folder', err)
@@ -330,39 +335,19 @@ const SettingsPanel: React.FC = () => {
             className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
             placeholder="C:\path\to\local\folder"
           />
-          <button
-            type="button"
-            onClick={handleBrowse}
-            className="px-3 py-1 bg-vscode-hover text-xs rounded border border-vscode-border hover:bg-vscode-border transition-colors"
-          >
-            Browse…
-          </button>
-        </div>
         <button
           type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className={`px-3 py-1 text-xs rounded ${
-            saving ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-accent text-white hover:bg-blue-600'
-          } transition-colors`}
+          onClick={handleBrowse}
+          className="px-3 py-1 bg-vscode-hover text-xs rounded border border-vscode-border hover:bg-vscode-border transition-colors"
         >
-          {saving ? 'Saving…' : 'Save Sync Folder'}
+          Browse…
         </button>
-        {loading && (
-          <div className="mt-1 text-xs text-vscode-text-muted">
-            Loading current settings…
-          </div>
-        )}
-        {error && (
-          <div className="mt-1 text-xs text-red-400">
-            {error}
-          </div>
-        )}
-        {status && (
-          <div className="mt-1 text-xs text-green-400">
-            {status}
-          </div>
-        )}
+      </div>
+      {loading && (
+        <div className="mt-1 text-xs text-vscode-text-muted">
+          Loading current settings…
+        </div>
+      )}
       </section>
       <section>
         <h4 className="font-semibold mb-1">Database (PostgreSQL)</h4>
@@ -568,6 +553,24 @@ const SettingsPanel: React.FC = () => {
           Configure how file paths on the server map to your website URLs for the “View in browser” option.
         </p>
         <div className="space-y-2">
+          <label className="inline-flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={enablePreviewInspector}
+              onChange={async (e) => {
+                const next = e.target.checked
+                setEnablePreviewInspector(next)
+                try {
+                  const res = await electronAPI.settingsSetEnablePreviewInspector(next)
+                  if (!res.success) setError(res.error || 'Failed to save inspector setting')
+                } catch (err) {
+                  console.error('Failed to save inspector setting', err)
+                  setError('Failed to save inspector setting')
+                }
+              }}
+            />
+            <span>Enable Preview Inspector (DevTools)</span>
+          </label>
           <div>
             <label className="block text-xs font-medium mb-1">Base URL</label>
             <input
@@ -598,6 +601,28 @@ const SettingsPanel: React.FC = () => {
           </div>
         </div>
       </section>
+      <div className="pt-2 border-t border-vscode-border">
+        {error && (
+          <div className="mb-2 text-xs text-red-400">
+            {error}
+          </div>
+        )}
+        {status && (
+          <div className="mb-2 text-xs text-green-400">
+            {status}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className={`px-3 py-1 text-xs rounded ${
+            saving ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-accent text-white hover:bg-blue-600'
+          } transition-colors`}
+        >
+          {saving ? 'Saving…' : 'Save All Settings'}
+        </button>
+      </div>
     </div>
   )
 }
