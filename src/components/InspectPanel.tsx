@@ -335,6 +335,13 @@ interface InspectPanelProps {
       oldValue: string | null
       newValue: string | null
     }[]
+    /**
+     * Fully-qualified stylesheet URLs (as reported by the inspector "source"
+     * field) that have at least one active rule change. The saver uses this
+     * to restrict which external CSS files it serializes and uploads, instead
+     * of touching every stylesheet on the page.
+     */
+    ruleChangeSources?: string[]
   }) => void
 }
 
@@ -1320,6 +1327,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                     newValue: string | null
                   }
                 >()
+                const ruleChangeSourceSet = new Set<string>()
 
                 changes.forEach((change) => {
                   if (change.active === false) return
@@ -1341,21 +1349,14 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                     return
                   }
 
-                  // Aggregate element.style inline edits
+                  // Aggregate element.style inline edits, including new inline properties.
+                  // New inline styles are handled in the saver by using the live DOM
+                  // snapshot to create or update style="..." attributes.
                   if (
                     change.scope === 'inline' &&
                     change.elementPath &&
                     typeof change.property === 'string'
                   ) {
-                    const isNewInline =
-                      change.type === 'set' &&
-                      (change.oldValue === null || change.oldValue === '')
-                    if (isNewInline) {
-                      // Surface this change in the UI, but do not attempt to
-                      // save it back into the HTML automatically.
-                      return
-                    }
-
                     const key = `${change.elementPath}::${change.property}`
                     const oldValue =
                       typeof change.oldValue === 'string' ? change.oldValue : null
@@ -1369,11 +1370,22 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                       newValue
                     })
                   }
+
+                  // Track which external stylesheets actually have active rule changes.
+                  if (
+                    change.scope === 'rule' &&
+                    change.type === 'set' &&
+                    typeof change.source === 'string' &&
+                    change.source
+                  ) {
+                    ruleChangeSourceSet.add(change.source)
+                  }
                 })
 
                 onSaveChanges({
                   textChanges: Array.from(textByPath.values()),
-                  inlineStyleChanges: Array.from(inlineByPathProp.values())
+                  inlineStyleChanges: Array.from(inlineByPathProp.values()),
+                  ruleChangeSources: Array.from(ruleChangeSourceSet.values())
                 })
               }}
               disabled={changes.length === 0}
@@ -1446,7 +1458,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
                     {isNewInline && (
                       <span
                         className="inline-flex items-center justify-center w-3 h-3 text-[9px] rounded-full bg-yellow-500 text-black flex-shrink-0"
-                        title="New inline style must be added to the HTML file manually"
+                        title="New inline style will be saved when we can safely match the element in the source HTML"
                       >
                         !
                       </span>

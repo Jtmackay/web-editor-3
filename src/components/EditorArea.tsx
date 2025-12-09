@@ -607,11 +607,6 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       return urlObj.pathname || '/'
     }
 
-    // Only attempt to map same-origin resources.
-    if (urlObj.hostname.toLowerCase() !== baseUrl.hostname.toLowerCase()) {
-      return null
-    }
-
     const normalizedPath = (urlObj.pathname || '/').replace(/\\/g, '/')
     const normalizedStart = startAfterRaw
       .replace(/\\/g, '/')
@@ -665,13 +660,22 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       const textChanges = payload?.textChanges || []
       const inlineStyleChanges = payload?.inlineStyleChanges || []
 
+      // Always let the user know that a save attempt is happening so it
+      // doesn't feel like the button is dead even if nothing ends up written.
+      editorState.setStatusMessage('Saving inspector changes...')
+      editorState.setError(null)
+
+      // We only need the original HTML when there are text/inline-style edits to apply.
+      // CSS rule changes are captured directly from the live <style>/<link> sheets below.
+      const hasHtmlWork = textChanges.length > 0 || inlineStyleChanges.length > 0
+
       // 1. Save HTML by patching the original source content (never by serializing
       // the live DOM). This keeps any server-side code (PHP includes, etc.)
       // untouched and only applies the specific text / inline-style edits.
       const htmlRemotePath = sourcePath || ''
       let savedHtml = false
 
-      if (htmlRemotePath) {
+      if (htmlRemotePath && hasHtmlWork) {
         const matchingFiles = editorState.openFiles.filter(
           (f) => f.kind !== 'preview' && f.path === htmlRemotePath
         )
@@ -684,6 +688,13 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
             await electronAPI.ftpDownloadFile(htmlRemotePath, undefined as any)
           if (dl.success && typeof dl.content === 'string') {
             sourceContent = dl.content
+          } else {
+            const msg =
+              dl.error ||
+              `Failed to download original HTML for inspector save: ${htmlRemotePath}`
+            editorState.setError(msg)
+            editorState.setStatusMessage(null)
+            return
           }
         }
 
@@ -962,6 +973,7 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       const seenCssPaths = new Set<string>()
 
       let savedAnyCss = false
+      const failedCssUploads: string[] = []
 
       for (const sheet of styleSheets) {
         if (!sheet) continue
@@ -996,9 +1008,8 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
         if (!cssRes.success || !cssRes.path) {
           const msg =
             cssRes.error || `Failed to save stylesheet to local sync folder: ${remotePath}`
-          editorState.setError(msg)
-          editorState.setStatusMessage(null)
-          return
+          failedCssUploads.push(`${remotePath} (${msg})`)
+          continue
         }
 
         const ftpCssRes = await electronAPI.ftpUploadFile(cssRes.path, remotePath)
@@ -1006,9 +1017,8 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           const msg =
             ftpCssRes.error ||
             `Stylesheet saved to local sync folder but failed to sync to server: ${remotePath}`
-          editorState.setError(msg)
-          editorState.setStatusMessage(null)
-          return
+          failedCssUploads.push(`${remotePath} (${msg})`)
+          continue
         }
 
         // Update any open editor tabs for this CSS file and mark them clean now
@@ -1025,9 +1035,30 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
 
       if (!savedHtml && savedAnyCss) {
         editorState.setStatusMessage(
-          'Saved inspector stylesheet changes to server and sync folder'
+          failedCssUploads.length === 0
+            ? 'Saved inspector stylesheet changes to server and sync folder'
+            : `Saved some inspector stylesheet changes, but failed for: ${failedCssUploads.join(
+                '; '
+              )}`
         )
-        editorState.setError(null)
+        editorState.setError(failedCssUploads.length ? failedCssUploads.join('; ') : null)
+      }
+
+      // If we reached this point without saving HTML or any stylesheets, make
+      // it explicit so it doesn't look like the Save button did nothing.
+      if (!savedHtml && !savedAnyCss) {
+        if (failedCssUploads.length) {
+          const msg = `Failed to save inspector stylesheet changes: ${failedCssUploads.join(
+            '; '
+          )}`
+          editorState.setError(msg)
+          editorState.setStatusMessage(null)
+        } else {
+          editorState.setStatusMessage(
+            'No matching HTML or stylesheets were found to update for this preview'
+          )
+          // Keep error null here; this is informational rather than a hard failure.
+        }
       }
     } catch (err) {
       console.error('Failed to save inspector changes:', err)
