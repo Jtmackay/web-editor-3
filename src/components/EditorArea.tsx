@@ -56,6 +56,25 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
   }, [])
 
   useEffect(() => {
+    const handler = (e: Event) => {
+      const iframe = iframeRef.current
+      if (!iframe) return
+      try {
+        const win = iframe.contentWindow
+        if (win && typeof win.location.reload === 'function') {
+          win.location.reload()
+        } else {
+          iframe.src = iframe.src
+        }
+      } catch {
+        iframe.src = iframe.src
+      }
+    }
+    window.addEventListener('preview:reload', handler as any)
+    return () => window.removeEventListener('preview:reload', handler as any)
+  }, [])
+
+  useEffect(() => {
     if (!allowInspector) return
     const iframe = iframeRef.current
     if (!iframe) return
@@ -1080,6 +1099,15 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       editorState.setError(msg)
       editorState.setStatusMessage(null)
     }
+    try {
+      const iframe = iframeRef.current
+      const win = iframe?.contentWindow
+      if (win && typeof win.location.reload === 'function') {
+        win.location.reload()
+      } else if (iframe) {
+        iframe.src = iframe.src
+      }
+    } catch {}
   }
 
   if (!url) {

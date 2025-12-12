@@ -76,6 +76,7 @@ function App() {
           useEditorStore.getState().setFileDirty(file.id, false)
           useEditorStore.getState().setStatusMessage(`Saved to sync folder: ${file.path}`)
           useEditorStore.getState().setError(null)
+          try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
         } else {
           useEditorStore.getState().setError(res.error || 'Failed to save file to sync folder')
           useEditorStore.getState().setStatusMessage(null)
@@ -160,6 +161,7 @@ function App() {
           useEditorStore.getState().setFileDirty(file.id, false)
           useEditorStore.getState().setStatusMessage(`Saved and synced to server: ${file.path}`)
           useEditorStore.getState().setError(null)
+          try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
           if (uid) {
             try {
               const hashToStore = newHash ?? (await computeContentHash(file.content))
@@ -196,4 +198,3 @@ function App() {
 }
 
 export default App
-

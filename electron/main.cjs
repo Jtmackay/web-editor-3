@@ -78,8 +78,8 @@ function createMenu() {
         { label: 'New File', accelerator: 'CmdOrCtrl+N', click: () => mainWindow.webContents.send('menu-new-file') },
         { label: 'Open File', accelerator: 'CmdOrCtrl+O', click: () => mainWindow.webContents.send('menu-open-file') },
         { type: 'separator' },
-        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => mainWindow.webContents.send('menu-save-file') },
-        { label: 'Save and Sync to Server', accelerator: 'CmdOrCtrl+Alt+S', click: () => mainWindow.webContents.send('menu-save-and-sync') },
+        { label: 'Save', accelerator: 'F5', click: () => mainWindow.webContents.send('menu-save-file') },
+        { label: 'Save and Sync to Server', accelerator: 'F4', click: () => mainWindow.webContents.send('menu-save-and-sync') },
         { label: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow.webContents.send('menu-save-as') },
         { label: 'Save All', accelerator: 'CmdOrCtrl+Shift+Alt+S', click: () => mainWindow.webContents.send('menu-save-all') },
         { type: 'separator' },
@@ -559,6 +559,7 @@ app.whenReady().then(async () => {
   databaseService = new DatabaseService()
   fileCacheService = new FileCacheService()
   settingsService = new SettingsService()
+  try { settingsService.setEnablePreviewInspector(true) } catch (e) {}
   try { await databaseService.initialize() } catch (e) {}
   try { await fileCacheService.initialize() } catch (e) {}
   createWindow(); createMenu(); setupIPC()

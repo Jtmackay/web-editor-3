@@ -82,7 +82,7 @@ class SettingsService {
     return { name: normalized }
   }
   getEnablePreviewInspector() {
-    return !!this.store.get('enablePreviewInspector', false)
+    return !!this.store.get('enablePreviewInspector', true)
   }
   setEnablePreviewInspector(enabled) {
     const value = !!enabled

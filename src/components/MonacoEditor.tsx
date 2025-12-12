@@ -6,6 +6,7 @@ import { electronAPI } from '../utils/electronAPI'
 const MonacoEditor: React.FC = () => {
   const { openFiles, activeFile, updateFileContent } = useEditorStore()
   const editorRef = useRef<any>(null)
+  const changeTimerRef = useRef<number | null>(null)
 
   const currentFile = openFiles.find(f => f.id === activeFile)
 
@@ -13,6 +14,7 @@ const MonacoEditor: React.FC = () => {
 
   const handleEditorDidMount = (editor: any) => {
     editorRef.current = editor
+    const selectionJustMadeRef: { current: boolean } = { current: false }
     
     // Configure editor options to match VSCode
     editor.updateOptions({
@@ -29,7 +31,54 @@ const MonacoEditor: React.FC = () => {
       detectIndentation: true,
       trimAutoWhitespace: true,
       formatOnPaste: true,
-      formatOnType: true,
+      formatOnType: false,
+    })
+
+    editor.onDidChangeModelContent(() => {
+      if (changeTimerRef.current) {
+        window.clearTimeout(changeTimerRef.current)
+        changeTimerRef.current = null
+      }
+      changeTimerRef.current = window.setTimeout(() => {
+        const state = useEditorStore.getState()
+        const activeId = state.activeFile
+        if (!activeId) return
+        const file = state.openFiles.find((f) => f.id === activeId)
+        if (!file) return
+        const val = editor.getValue()
+        if (typeof val === 'string' && val !== file.content) {
+          state.updateFileContent(file.id, val)
+        }
+      }, 60)
+    })
+
+    editor.onDidChangeCursorSelection((e: any) => {
+      try { editor.focus() } catch {}
+      try {
+        const sel = e?.selection || editor.getSelection?.()
+        const hasSelection = sel && !sel.isEmpty?.()
+        if (hasSelection) {
+          selectionJustMadeRef.current = true
+        }
+      } catch {}
+    })
+    editor.onKeyDown?.((ev: any) => {
+      try {
+        if (!selectionJustMadeRef.current) return
+        const be = ev?.browserEvent
+        const key = be?.key || ''
+        const ctrl = be?.ctrlKey || be?.metaKey
+        const alt = be?.altKey
+        const isPrintable = key && key.length === 1 && !ctrl && !alt
+        if (!isPrintable) return
+        selectionJustMadeRef.current = false
+        ev.preventDefault?.()
+        ev.stopPropagation?.()
+        editor.trigger('keyboard', 'type', { text: key })
+      } catch {}
+    })
+    editor.onDidFocusEditorText?.(() => {
+      try { editor.focus() } catch {}
     })
   }
 
@@ -48,13 +97,25 @@ const MonacoEditor: React.FC = () => {
     return () => { unsubscribe && unsubscribe() }
   }, [])
 
-  const handleEditorChange = (value: string | undefined) => {
-    if (currentFile && value !== undefined) {
-      if (value !== currentFile.content) {
-        updateFileContent(currentFile.id, value)
-      }
+  
+
+  useEffect(() => {
+    if (!editorRef.current || !currentFile) return
+    const model = editorRef.current.getModel?.()
+    const current = model?.getValue?.()
+    const hasFocus = editorRef.current.hasTextFocus?.()
+    if (hasFocus) return
+    if (typeof currentFile.content === 'string' && current !== currentFile.content) {
+      model?.setValue?.(currentFile.content)
     }
-  }
+  }, [currentFile?.content])
+
+  useEffect(() => {
+    if (!editorRef.current || !currentFile) return
+    const model = editorRef.current.getModel?.()
+    model?.setValue?.(currentFile.content)
+  }, [currentFile?.id])
+  
 
   if (!currentFile) {
     return null
@@ -65,8 +126,9 @@ const MonacoEditor: React.FC = () => {
       <Editor
         height="100%"
         language={currentFile.language}
-        value={currentFile.content}
-        onChange={handleEditorChange}
+        defaultValue={currentFile.content}
+        path={currentFile.id}
+        saveViewState
         onMount={handleEditorDidMount}
         theme="vs-dark"
         options={{
@@ -76,7 +138,7 @@ const MonacoEditor: React.FC = () => {
           autoClosingQuotes: 'always',
           autoIndent: 'full',
           formatOnPaste: true,
-          formatOnType: true,
+          formatOnType: false,
           suggestOnTriggerCharacters: true,
           quickSuggestions: true,
           wordBasedSuggestions: true,

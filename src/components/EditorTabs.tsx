@@ -121,6 +121,7 @@ const EditorTabs: React.FC = () => {
       store.setFileDirty(file.id, false)
       store.setStatusMessage(`Saved to sync folder: ${file.path}`)
       store.setError(null)
+      try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
     } else {
       const store = useEditorStore.getState()
       store.setError(res.error || 'Failed to save file to sync folder')
@@ -190,6 +191,7 @@ const EditorTabs: React.FC = () => {
       store.setFileDirty(file.id, false)
       store.setStatusMessage(`Saved and synced to server: ${file.path}`)
       store.setError(null)
+       try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
       if (uid) {
         try {
           const hashToStore = newHash ?? (await computeContentHash(file.content))
