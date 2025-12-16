@@ -11,6 +11,8 @@ const HistoryPanel: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [compare, setCompare] = useState<{ left: string; right: string; language: string; timestamp?: string; key: string } | null>(null)
+  const [editedFiles, setEditedFiles] = useState<{ file_path: string; last_edit: string; version_count: number }[]>([])
+  const [tab, setTab] = useState<'versions' | 'recent'>('versions')
 
   useEffect(() => {
     const current = openFiles.find(f => f.kind !== 'preview')
@@ -44,6 +46,17 @@ const HistoryPanel: React.FC = () => {
     }
   }, [filePath])
 
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const res = await electronAPI.dbGetEditedFiles?.(200)
+        if (res && res.success && Array.isArray(res.files)) {
+          setEditedFiles(res.files)
+        }
+      } catch {}
+    })()
+  }, [])
+
   const getLanguageFromExtension = (filename: string): string => {
     const ext = filename.split('.').pop()?.toLowerCase()
     const map: Record<string, string> = {
@@ -76,6 +89,34 @@ const HistoryPanel: React.FC = () => {
     }
   }
 
+  const basename = (p: string): string => {
+    const s = String(p || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    const parts = s.split('/')
+    return parts.pop() || s
+  }
+
+  const openRecentFile = async (p: string) => {
+    try {
+      const dl = await electronAPI.ftpDownloadFile(p, undefined as any)
+      const content = dl && dl.success && typeof dl.content === 'string' ? dl.content : ''
+      const lang = getLanguageFromExtension(basename(p))
+      const editor = useEditorStore.getState()
+      const existing = editor.openFiles.find((f) => f.path === p && (!f.kind || f.kind === 'code'))
+      if (existing) {
+        editor.setActiveFile(existing.id)
+      } else {
+        const now = new Date()
+        editor.openFile({ id: p, path: p, name: basename(p), content, language: lang, isDirty: false, lastModified: now })
+        editor.setActiveFile(p)
+      }
+      setPathInput(p)
+      setFilePath(p)
+      setTab('versions')
+    } catch (err) {
+      setError('Failed to open file')
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-vscode-border">
@@ -94,50 +135,79 @@ const HistoryPanel: React.FC = () => {
           >Load</button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto vscode-scrollbar">
-        {loading ? (
-          <div className="p-3 text-xs text-vscode-text-muted">Loading…</div>
-        ) : error ? (
-          <div className="p-3 text-xs text-red-400">{error}</div>
-        ) : versions.length === 0 ? (
-          <div className="p-3 text-xs text-vscode-text-muted">No versions</div>
-        ) : (
-          <div className="p-2 space-y-2">
-            {versions.map((v, i) => (
-              <div key={v.id} className="border border-vscode-border rounded p-2 text-xs bg-vscode-bg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-semibold">{i === 0 ? 'Current' : v.action}</span>
-                    <span className="ml-2 text-vscode-text-muted">{new Date(v.created_at).toLocaleString()}</span>
-                    {v.username && <span className="ml-2">by {v.username}</span>}
-                  </div>
-                  <div className="flex flex-col gap-1 items-end">
-                    <button
-                      className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
-                      onClick={async () => { await openCompare(v) }}
-                    >Compare</button>
-                    <button
-                      className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
-                      onClick={async () => {
-                        try {
-                          const res = await electronAPI.dbRestoreFileVersion?.(v.id)
-                          if (!res || !res.success) {
-                            setError((res && (res as any).error) || 'Restore failed')
-                          } else {
-                            await load(filePath)
+      <div className="p-2 border-t border-vscode-border flex items-center gap-2">
+        <button
+          className={`px-2 py-1 text-xs rounded border ${tab === 'versions' ? 'bg-vscode-selection text-white border-vscode-selection' : 'bg-vscode-sidebar border-vscode-border hover:bg-vscode-hover'}`}
+          onClick={() => setTab('versions')}
+        >Versions</button>
+        <button
+          className={`px-2 py-1 text-xs rounded border ${tab === 'recent' ? 'bg-vscode-selection text-white border-vscode-selection' : 'bg-vscode-sidebar border-vscode-border hover:bg-vscode-hover'}`}
+          onClick={() => setTab('recent')}
+        >Recent Edits</button>
+      </div>
+      {tab === 'versions' ? (
+        <div className="flex-1 overflow-auto vscode-scrollbar">
+          {loading ? (
+            <div className="p-3 text-xs text-vscode-text-muted">Loading…</div>
+          ) : error ? (
+            <div className="p-3 text-xs text-red-400">{error}</div>
+          ) : versions.length === 0 ? (
+            <div className="p-3 text-xs text-vscode-text-muted">No versions</div>
+          ) : (
+            <div className="p-2 space-y-2">
+              {versions.map((v, i) => (
+                <div key={v.id} className="border border-vscode-border rounded p-2 text-xs bg-vscode-bg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold">{i === 0 ? 'Current' : v.action}</span>
+                      <span className="ml-2 text-vscode-text-muted">{new Date(v.created_at).toLocaleString()}</span>
+                      {v.username && <span className="ml-2">by {v.username}</span>}
+                    </div>
+                    <div className="flex flex-col gap-1 items-end">
+                      <button
+                        className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                        onClick={async () => { await openCompare(v) }}
+                      >Compare</button>
+                      <button
+                        className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                        onClick={async () => {
+                          try {
+                            const res = await electronAPI.dbRestoreFileVersion?.(v.id)
+                            if (!res || !res.success) {
+                              setError((res && (res as any).error) || 'Restore failed')
+                            } else {
+                              await load(filePath)
+                            }
+                          } catch (err) {
+                            setError('Restore failed')
                           }
-                        } catch (err) {
-                          setError('Restore failed')
-                        }
-                      }}
-                    >Restore</button>
+                        }}
+                      >Restore</button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 overflow-auto vscode-scrollbar">
+          {editedFiles.length === 0 ? (
+            <div className="p-3 text-xs text-vscode-text-muted">No recent edits</div>
+          ) : (
+            <div className="p-2 space-y-1">
+              {editedFiles.map((f) => (
+                <div key={f.file_path} className="flex items-center justify-between px-2 py-1 hover:bg-vscode-hover cursor-pointer rounded"
+                  onClick={() => openRecentFile(f.file_path)}
+                >
+                  <span className="text-xs truncate flex-1">{basename(f.file_path)}</span>
+                  <span className="ml-2 text-[11px] text-vscode-text-muted">{new Date(f.last_edit).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {compare && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={() => setCompare(null)}>
           <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[1200px] max-w-[95vw] max-h-[90vh] p-3" onClick={(e) => e.stopPropagation()}>

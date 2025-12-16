@@ -356,6 +356,12 @@ function setupIPC() {
   ipcMain.handle('db-get-ftp-connections', async (event, userId) => {
     try { const cons = await databaseService.getFTPConnections(userId); return { success: true, connections: cons } } catch (error) { return { success: false, error: error.message } }
   })
+  ipcMain.handle('db-get-edited-files', async (_event, limit) => {
+    try {
+      const rows = await databaseService.getEditedFiles(Number(limit) || 100)
+      return { success: true, files: rows }
+    } catch (error) { return { success: false, error: error.message } }
+  })
   ipcMain.handle('db-add-ftp-connection', async (event, { userId, name, host, port, username, password, defaultPath }) => {
     try { const c = await databaseService.addFTPConnection(userId, name, host, port, username, password, defaultPath); return { success: true, connection: c } } catch (error) { return { success: false, error: error.message } }
   })
@@ -713,8 +719,6 @@ app.whenReady().then(async () => {
       const runCheck = async () => {
         try {
           const paths = await databaseService.getRecentVersionedPaths(30)
-          const policy = settingsService.getDriftPolicy()
-          const protectedPaths = new Set(settingsService.getProtectedPaths())
           for (const p of paths) {
             try {
               const latest = await databaseService.getLatestFileVersion(null, p)
@@ -729,22 +733,72 @@ app.whenReady().then(async () => {
                 const userId = user && user.id ? user.id : null
                 try { await databaseService.addFileVersion(null, p, userId, remoteContent, remoteHash, 'external_change', latest.id) } catch {}
                 try { await databaseService.addFileHistory(null, p, userId, 'external_change', remoteHash, 'Detected drift') } catch {}
-                const isProtected = protectedPaths.has(p)
-                if (policy === 'auto_restore' && isProtected) {
-                  try {
-                    await ftpService.uploadFile(latest.content || '', p)
-                    const restoreHash = latest.content_hash
-                    try { await databaseService.addFileVersion(null, p, userId, latest.content || '', restoreHash, 'revert', latest.id) } catch {}
-                    try { await databaseService.addFileHistory(null, p, userId, 'revert', restoreHash, 'Auto-restore after drift') } catch {}
-                  } catch {}
-                } else {
-                  if (mainWindow && !mainWindow.isDestroyed()) {
-                    try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
-                  }
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
                 }
               }
             } catch {}
           }
+
+          // Also scan a shallow set of files in the current connection default path
+          try {
+            const cfg = ftpService.getCurrentConnection && ftpService.getCurrentConnection()
+            const bases = []
+            if (cfg && cfg.defaultPath) bases.push(String(cfg.defaultPath))
+            bases.push('/')
+            const seen = new Set()
+            for (const base of bases) {
+              const b = String(base || '/').replace(/\\/g, '/')
+              if (seen.has(b)) continue
+              seen.add(b)
+              let listRes
+              try { listRes = await ftpService.listFiles(b) } catch { continue }
+              const nowMs = Date.now()
+              for (const item of listRes || []) {
+                if (item && item.type === 'file') {
+                  const p = String(item.path || '').replace(/\\/g, '/')
+                  const latest = await databaseService.getLatestFileVersion(null, p)
+                  const modifiedMs = item.modified ? new Date(item.modified).getTime() : (item.modifiedAt ? new Date(item.modifiedAt).getTime() : 0)
+                  const withinWindow = modifiedMs > 0 ? (nowMs - modifiedMs) <= (48 * 60 * 60 * 1000) : true
+                  if (!latest && withinWindow) {
+                    try {
+                      const content = await ftpService.downloadFile(p, null)
+                      const crypto = require('crypto')
+                      const hash = crypto.createHash('md5').update(String(content || '')).digest('hex')
+                      let user = null
+                      try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+                      const userId = user && user.id ? user.id : null
+                      await databaseService.addFileVersion(null, p, userId, content, hash, 'external_change', null)
+                      await databaseService.addFileHistory(null, p, userId, 'external_change', hash, 'Detected drift')
+                      if (mainWindow && !mainWindow.isDestroyed()) {
+                        try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+                      }
+                    } catch {}
+                  } else if (latest && modifiedMs > 0) {
+                    // If remote modified time is newer than our latest version, verify hash
+                    const latestTime = latest.created_at ? new Date(latest.created_at).getTime() : 0
+                    if (modifiedMs > latestTime) {
+                      try {
+                        const content = await ftpService.downloadFile(p, null)
+                        const crypto = require('crypto')
+                        const hash = crypto.createHash('md5').update(String(content || '')).digest('hex')
+                        if (hash !== latest.content_hash) {
+                          let user = null
+                          try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+                          const userId = user && user.id ? user.id : null
+                          await databaseService.addFileVersion(null, p, userId, content, hash, 'external_change', latest.id)
+                          await databaseService.addFileHistory(null, p, userId, 'external_change', hash, 'Detected drift')
+                          if (mainWindow && !mainWindow.isDestroyed()) {
+                            try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+                          }
+                        }
+                      } catch {}
+                    }
+                  }
+                }
+              }
+            }
+          } catch {}
         } catch {}
       }
       runCheck()

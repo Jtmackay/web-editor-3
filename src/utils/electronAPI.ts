@@ -33,6 +33,7 @@ declare global {
       dbAddFTPConnection: (payload: { userId: number; name: string; host: string; port: number; username: string; password: string; defaultPath: string }) => Promise<{ success: boolean; connection?: any; error?: string }>
       dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => Promise<{ success: boolean; removed?: any; error?: string }>
       dbGetFTPPassword: (connectionId: number) => Promise<{ success: boolean; password?: string; error?: string }>
+      dbGetEditedFiles?: (limit?: number) => Promise<{ success: boolean; files?: { file_path: string; last_edit: string; version_count: number }[]; error?: string }>
       settingsGetFTPConnections: () => Promise<{ success: boolean; connections?: any[]; error?: string }>
       settingsAddFTPConnection: (conn: { name: string; host: string; port: number; username: string; password: string; defaultPath: string; appendedUrl?: string }) => Promise<{ success: boolean; connection?: any; error?: string }>
       settingsRemoveFTPConnection: (id: number | string) => Promise<{ success: boolean; removed?: any; error?: string }>
@@ -125,6 +126,7 @@ export const electronAPI = {
   dbAddFTPConnection: (payload: { userId: number; name: string; host: string; port: number; username: string; password: string; defaultPath: string }) => window.electronAPI?.dbAddFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => window.electronAPI?.dbRemoveFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetFTPPassword: (connectionId: number) => window.electronAPI?.dbGetFTPPassword(connectionId) || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  dbGetEditedFiles: (limit?: number) => (window.electronAPI && typeof window.electronAPI.dbGetEditedFiles === 'function') ? window.electronAPI.dbGetEditedFiles(limit) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsGetFTPConnections: () => window.electronAPI?.settingsGetFTPConnections() || Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsAddFTPConnection: (conn: { name: string; host: string; port: number; username: string; password: string; defaultPath: string; appendedUrl?: string }) => window.electronAPI?.settingsAddFTPConnection(conn) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsRemoveFTPConnection: (id: number | string) => window.electronAPI?.settingsRemoveFTPConnection(id) || Promise.resolve({ success: false, error: 'Electron API not available' }),

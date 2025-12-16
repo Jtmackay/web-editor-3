@@ -155,6 +155,29 @@ class DatabaseService {
     return Array.from(set)
   }
 
+  async getEditedFiles(limit = 100) {
+    if (this.dbAvailable && this.pool) {
+      const q = `SELECT file_path, MAX(created_at) AS last_edit, COUNT(*) AS version_count FROM file_versions GROUP BY file_path ORDER BY last_edit DESC LIMIT $1`
+      const r = await this.pool.query(q, [limit])
+      return r.rows.map(row => ({ file_path: row.file_path, last_edit: row.last_edit, version_count: Number(row.version_count || 0) }))
+    }
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const map = new Map()
+    for (const v of all) {
+      const p = String(v.file_path)
+      const ts = new Date(v.created_at).getTime() || 0
+      const prev = map.get(p)
+      if (!prev || ts > prev.ts) {
+        map.set(p, { ts, count: (prev ? prev.count : 0) + 1 })
+      } else {
+        map.set(p, { ts: prev.ts, count: prev.count + 1 })
+      }
+    }
+    const arr = Array.from(map.entries()).map(([file_path, d]) => ({ file_path, last_edit: new Date(d.ts).toISOString(), version_count: d.count }))
+    arr.sort((a, b) => new Date(b.last_edit).getTime() - new Date(a.last_edit).getTime())
+    return arr.slice(0, limit)
+  }
+
   async addFileHistory(ftpConnectionId, filePath, userId, action, fileHash = null, changesSummary = null) {
     if (this.dbAvailable && this.pool) {
       const q = `INSERT INTO file_history (ftp_connection_id, file_path, user_id, action, file_hash, changes_summary)

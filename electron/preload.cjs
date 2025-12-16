@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbAddFTPConnection: (payload) => ipcRenderer.invoke('db-add-ftp-connection', payload),
   dbRemoveFTPConnection: (payload) => ipcRenderer.invoke('db-remove-ftp-connection', payload),
   dbGetFTPPassword: (connectionId) => ipcRenderer.invoke('db-get-ftp-password', connectionId),
+  dbGetEditedFiles: (limit) => ipcRenderer.invoke('db-get-edited-files', limit),
   settingsGetFTPConnections: () => ipcRenderer.invoke('settings-get-ftp-connections'),
   settingsAddFTPConnection: (conn) => ipcRenderer.invoke('settings-add-ftp-connection', conn),
   settingsRemoveFTPConnection: (id) => ipcRenderer.invoke('settings-remove-ftp-connection', id),
