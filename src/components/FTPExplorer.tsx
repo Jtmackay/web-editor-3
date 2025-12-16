@@ -59,6 +59,8 @@ const FTPExplorer: React.FC = () => {
   const [hideIgnoredInExplorer, setHideIgnoredInExplorer] = useState(false)
   const [hiddenIgnorePatterns, setHiddenIgnorePatterns] = useState<string[]>([])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FTPFile } | null>(null)
+  const [protectedPaths, setProtectedPaths] = useState<string[]>([])
+  const [driftPaths, setDriftPaths] = useState<Set<string>>(new Set())
 
   const getStatusForPath = (path: string): FileStatus | undefined => {
     return fileStatuses[path]
@@ -279,6 +281,44 @@ const FTPExplorer: React.FC = () => {
   }, [isConnected])
 
   
+
+  useEffect(() => {
+    const offDrift = electronAPI.onDriftDetected?.((_event, payload) => {
+      const p = payload && payload.path ? String(payload.path) : ''
+      if (!p) return
+      setDriftPaths((prev) => new Set([...prev, p]))
+    })
+    return () => { if (offDrift) offDrift() }
+  }, [])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const res = await electronAPI.settingsGetDriftWatch?.()
+        if (res && res.success && Array.isArray(res.protectedPaths)) {
+          setProtectedPaths(res.protectedPaths)
+        }
+      } catch {}
+    })()
+  }, [])
+
+  const isProtected = (path: string) => protectedPaths.includes(path)
+
+  const toggleProtected = async (path: string) => {
+    try {
+      const next = isProtected(path)
+        ? protectedPaths.filter((p) => p !== path)
+        : [...protectedPaths, path]
+      setProtectedPaths(next)
+      await electronAPI.settingsSetDriftWatch?.({ protectedPaths: next })
+    } catch {
+      // ignore
+    }
+  }
+
+  const clearDriftFlag = (path: string) => {
+    setDriftPaths((prev) => { const n = new Set(prev); n.delete(path); return n })
+  }
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -724,6 +764,12 @@ const FTPExplorer: React.FC = () => {
             {getFileIcon(file)}
             
             <span className={`text-sm flex-1 ${statusTextClass}`}>{file.name}</span>
+            {isProtected(file.path) && (
+              <span className="ml-2 text-[10px] px-1 py-0.5 rounded bg-blue-700 text-white">Protected</span>
+            )}
+            {driftPaths.has(file.path) && (
+              <span className="ml-2 text-[10px] px-1 py-0.5 rounded bg-red-700 text-white">Drift</span>
+            )}
             {isIgnoredForSync(file) && (
               <span className="ml-2 text-[10px] px-1 py-0.5 rounded bg-vscode-border text-vscode-text-muted">
                 Ignored
@@ -873,6 +919,22 @@ const FTPExplorer: React.FC = () => {
             </>
           )}
           <div className="border-t border-vscode-border/60 my-1" />
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={async (e) => {
+              e.stopPropagation()
+              await toggleProtected(contextMenu.file.path)
+              setContextMenu(null)
+            }}
+          >
+            {isProtected(contextMenu.file.path) ? 'Unprotect (stop auto-restore)' : 'Protect (enable auto-restore)'}
+          </button>
+          {driftPaths.has(contextMenu.file.path) && (
+            <button
+              className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+              onClick={(e) => { e.stopPropagation(); clearDriftFlag(contextMenu.file.path); setContextMenu(null) }}
+            >Clear drift flag</button>
+          )}
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
             onClick={(e) => {

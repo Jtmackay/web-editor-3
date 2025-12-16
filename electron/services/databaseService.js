@@ -6,6 +6,8 @@ class DatabaseService {
     this.pool = null
     this.store = new Store({ name: 'database-config' })
     this.currentUser = null
+    this.dbAvailable = false
+    this.local = new Store({ name: 'database-local' })
   }
 
   getConfig() {
@@ -69,10 +71,12 @@ class DatabaseService {
 
       // Initialize database schema
       await this.initializeSchema()
+      this.dbAvailable = true
       
       return true
     } catch (error) {
       console.error('Database initialization failed:', error)
+      this.dbAvailable = false
       throw error
     }
   }
@@ -134,17 +138,35 @@ class DatabaseService {
         )
       `
 
+      const createFileVersionsTable = `
+        CREATE TABLE IF NOT EXISTS file_versions (
+          id SERIAL PRIMARY KEY,
+          ftp_connection_id INTEGER REFERENCES ftp_connections(id),
+          file_path TEXT NOT NULL,
+          user_id INTEGER REFERENCES users(id),
+          content TEXT,
+          content_hash VARCHAR(64) NOT NULL,
+          action VARCHAR(20) NOT NULL,
+          parent_version_id INTEGER REFERENCES file_versions(id),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `
+
       // Execute table creation queries
       await this.pool.query(createUsersTable)
       await this.pool.query(createFTPConnectionsTable)
       await this.pool.query(createActiveFilesTable)
       await this.pool.query(createFileHistoryTable)
+      await this.pool.query(createFileVersionsTable)
 
       // Create indexes for better performance
       await this.pool.query('CREATE INDEX IF NOT EXISTS idx_active_files_user_id ON active_files(user_id)')
       await this.pool.query('CREATE INDEX IF NOT EXISTS idx_active_files_connection_id ON active_files(ftp_connection_id)')
       await this.pool.query('CREATE INDEX IF NOT EXISTS idx_file_history_connection_id ON file_history(ftp_connection_id)')
       await this.pool.query('CREATE INDEX IF NOT EXISTS idx_file_history_user_id ON file_history(user_id)')
+
+      await this.pool.query('CREATE INDEX IF NOT EXISTS idx_file_versions_path ON file_versions(file_path)')
+      await this.pool.query('CREATE INDEX IF NOT EXISTS idx_file_versions_created_at ON file_versions(created_at)')
 
       console.log('Database schema initialized')
     } catch (error) {
@@ -288,7 +310,7 @@ class DatabaseService {
   }
 
   async addFileHistory(ftpConnectionId, filePath, userId, action, fileHash = null, changesSummary = null) {
-    try {
+    if (this.dbAvailable && this.pool) {
       const query = `
         INSERT INTO file_history (ftp_connection_id, file_path, user_id, action, file_hash, changes_summary)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -296,14 +318,15 @@ class DatabaseService {
       `
       const result = await this.pool.query(query, [ftpConnectionId, filePath, userId, action, fileHash, changesSummary])
       return result.rows[0]
-    } catch (error) {
-      console.error('Error adding file history:', error)
-      throw error
     }
+    const all = Array.isArray(this.local.get('file_history')) ? this.local.get('file_history') : []
+    const row = { id: Date.now(), ftp_connection_id: ftpConnectionId, file_path: filePath, user_id: userId, action, file_hash: fileHash, changes_summary: changesSummary, created_at: new Date().toISOString() }
+    this.local.set('file_history', [...all, row])
+    return row
   }
 
   async getFileHistory(ftpConnectionId, filePath, limit = 50) {
-    try {
+    if (this.dbAvailable && this.pool) {
       const query = `
         SELECT fh.*, u.username, u.avatar_url
         FROM file_history fh
@@ -314,10 +337,11 @@ class DatabaseService {
       `
       const result = await this.pool.query(query, [ftpConnectionId, filePath, limit])
       return result.rows
-    } catch (error) {
-      console.error('Error getting file history:', error)
-      throw error
     }
+    const all = Array.isArray(this.local.get('file_history')) ? this.local.get('file_history') : []
+    const filtered = all.filter((r) => String(r.file_path) === String(filePath))
+    filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    return filtered.slice(0, limit)
   }
 
   async getFTPConnections(userId) {
@@ -371,6 +395,100 @@ class DatabaseService {
       await this.pool.end()
       console.log('Database connection closed')
     }
+  }
+
+  async addFileVersion(ftpConnectionId, filePath, userId, content, contentHash, action, parentVersionId = null) {
+    if (this.dbAvailable && this.pool) {
+      const query = `
+        INSERT INTO file_versions (ftp_connection_id, file_path, user_id, content, content_hash, action, parent_version_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `
+      const result = await this.pool.query(query, [ftpConnectionId, filePath, userId, content, contentHash, action, parentVersionId])
+      return result.rows[0]
+    }
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const row = { id: Date.now(), ftp_connection_id: ftpConnectionId, file_path: filePath, user_id: userId, content, content_hash: contentHash, action, parent_version_id: parentVersionId, created_at: new Date().toISOString() }
+    this.local.set('file_versions', [...all, row])
+    return row
+  }
+
+  async getLatestFileVersion(ftpConnectionId, filePath) {
+    if (this.dbAvailable && this.pool) {
+      const query = `SELECT * FROM file_versions WHERE (ftp_connection_id IS NULL OR ftp_connection_id = $1) AND file_path = $2 ORDER BY created_at DESC LIMIT 1`
+      const result = await this.pool.query(query, [ftpConnectionId, filePath])
+      return result.rows[0] || null
+    }
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const filtered = all.filter((r) => String(r.file_path) === String(filePath))
+    filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    return filtered[0] || null
+  }
+
+  async getFileVersions(ftpConnectionId, filePath, limit = 50) {
+    if (this.dbAvailable && this.pool) {
+      const query = `
+        SELECT fv.*, u.username, u.avatar_url
+        FROM file_versions fv
+        LEFT JOIN users u ON fv.user_id = u.id
+        WHERE (fv.ftp_connection_id IS NULL OR fv.ftp_connection_id = $1) AND fv.file_path = $2
+        ORDER BY fv.created_at DESC
+        LIMIT $3
+      `
+      const result = await this.pool.query(query, [ftpConnectionId, filePath, limit])
+      return result.rows
+    }
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const filtered = all.filter((r) => String(r.file_path) === String(filePath))
+    filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    return filtered.slice(0, limit)
+  }
+
+  async getRecentVersionedPaths(days = 30) {
+    if (this.dbAvailable && this.pool) {
+      const query = `SELECT DISTINCT file_path FROM file_versions WHERE created_at > NOW() - INTERVAL '${days} days'`
+      const result = await this.pool.query(query)
+      return result.rows.map((row) => row.file_path)
+    }
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const recent = all.filter((r) => new Date(r.created_at).getTime() >= cutoff)
+    const set = new Set(recent.map((r) => r.file_path))
+    return Array.from(set)
+  }
+
+  async addFileVersion(ftpConnectionId, filePath, userId, content, contentHash, action, parentVersionId = null) {
+    const query = `
+      INSERT INTO file_versions (ftp_connection_id, file_path, user_id, content, content_hash, action, parent_version_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `
+    const result = await this.pool.query(query, [ftpConnectionId, filePath, userId, content, contentHash, action, parentVersionId])
+    return result.rows[0]
+  }
+
+  async getLatestFileVersion(ftpConnectionId, filePath) {
+    const query = `
+      SELECT * FROM file_versions
+      WHERE (ftp_connection_id IS NULL OR ftp_connection_id = $1) AND file_path = $2
+      ORDER BY created_at DESC
+      LIMIT 1
+    `
+    const result = await this.pool.query(query, [ftpConnectionId, filePath])
+    return result.rows[0] || null
+  }
+
+  async getFileVersions(ftpConnectionId, filePath, limit = 50) {
+    const query = `
+      SELECT fv.*, u.username, u.avatar_url
+      FROM file_versions fv
+      LEFT JOIN users u ON fv.user_id = u.id
+      WHERE (fv.ftp_connection_id IS NULL OR fv.ftp_connection_id = $1) AND fv.file_path = $2
+      ORDER BY fv.created_at DESC
+      LIMIT $3
+    `
+    const result = await this.pool.query(query, [ftpConnectionId, filePath, limit])
+    return result.rows
   }
 
   // Utility method to get current timestamp

@@ -179,6 +179,63 @@ function setupIPC() {
       try { await ftpService.uploadFile(localPath, remotePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
     })
   })
+
+  ipcMain.handle('publish-file', async (_event, payload) => {
+    return runQueued(async () => {
+      try {
+        const { remotePath, content, summary } = payload || {}
+        if (!remotePath || typeof content !== 'string') {
+          return { success: false, error: 'remotePath and content are required' }
+        }
+        const syncRoot = settingsService.getSyncFolder()
+        if (!syncRoot) {
+          return { success: false, error: 'Sync folder is not configured. Set it in the Settings tab.' }
+        }
+
+        const normalizeRemote = (p) => {
+          let out = String(p || '/').replace(/\\/g, '/')
+          if (!out.startsWith('/')) out = '/' + out
+          return out
+        }
+        const normalized = normalizeRemote(remotePath)
+        const relative = normalized.replace(/^\/+/, '')
+        const localPath = path.join(syncRoot, ...relative.split('/'))
+        const dir = path.dirname(localPath)
+        await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(localPath, content ?? '', 'utf-8')
+
+        await ftpService.uploadFile(localPath, normalized)
+
+        let user = null
+        try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+        const userId = user && user.id ? user.id : null
+        const crypto = require('crypto')
+        const hash = crypto.createHash('md5').update(String(content || '')).digest('hex')
+
+        let parent = null
+        try { parent = await databaseService.getLatestFileVersion(null, normalized) } catch {}
+        const parentId = parent && parent.id ? parent.id : null
+
+        try { await databaseService.addFileVersion(null, normalized, userId, content, hash, 'publish', parentId) } catch {}
+        try { await databaseService.addFileHistory(null, normalized, userId, 'publish', hash, summary || null) } catch {}
+
+        try {
+          if (settingsService.getAutoSnapshotOnPublish()) {
+            const ignore = settingsService.getSyncIgnorePatterns ? settingsService.getSyncIgnorePatterns() : []
+            await ftpService.syncToLocal('/', syncRoot, ignore, (count) => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                try { mainWindow.webContents.send('ftp-sync-progress', { count }) } catch {}
+              }
+            })
+          }
+        } catch {}
+
+        return { success: true, path: localPath, hash }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  })
   ipcMain.handle('ftp-create-directory', async (event, remotePath) => {
     return runQueued(async () => {
       try { await ftpService.createDirectory(remotePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
@@ -257,6 +314,44 @@ function setupIPC() {
   })
   ipcMain.handle('db-get-or-create-default-user', async () => {
     try { const user = await databaseService.getOrCreateDefaultUser(); return { success: true, user } } catch (error) { return { success: false, error: error.message } }
+  })
+  ipcMain.handle('db-get-file-history', async (_event, payload) => {
+    try {
+      const { filePath, limit } = payload || {}
+      const rows = await databaseService.getFileHistory(null, String(filePath || ''), Number(limit) || 50)
+      return { success: true, history: rows }
+    } catch (error) { return { success: false, error: error.message } }
+  })
+  ipcMain.handle('db-get-file-versions', async (_event, payload) => {
+    try {
+      const { filePath, limit } = payload || {}
+      const rows = await databaseService.getFileVersions(null, String(filePath || ''), Number(limit) || 50)
+      return { success: true, versions: rows }
+    } catch (error) { return { success: false, error: error.message } }
+  })
+  ipcMain.handle('db-restore-file-version', async (_event, payload) => {
+    return runQueued(async () => {
+      try {
+        const { versionId } = payload || {}
+        if (!versionId) return { success: false, error: 'versionId is required' }
+        let v = null
+        if (databaseService.dbAvailable && databaseService.pool) {
+          const r = await databaseService.pool.query('SELECT * FROM file_versions WHERE id = $1', [versionId])
+          v = r.rows.length ? r.rows[0] : null
+        } else {
+          const all = Array.isArray(databaseService.local.get('file_versions')) ? databaseService.local.get('file_versions') : []
+          v = all.find((row) => Number(row.id) === Number(versionId)) || null
+        }
+        if (!v) return { success: false, error: 'Version not found' }
+        await ftpService.uploadFile(v.content || '', v.file_path)
+        let user = null
+        try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+        const userId = user && user.id ? user.id : null
+        try { await databaseService.addFileVersion(null, v.file_path, userId, v.content || '', v.content_hash, 'revert', v.id) } catch {}
+        try { await databaseService.addFileHistory(null, v.file_path, userId, 'revert', v.content_hash, 'Manual restore') } catch {}
+        return { success: true }
+      } catch (error) { return { success: false, error: error.message } }
+    })
   })
   ipcMain.handle('db-get-ftp-connections', async (event, userId) => {
     try { const cons = await databaseService.getFTPConnections(userId); return { success: true, connections: cons } } catch (error) { return { success: false, error: error.message } }
@@ -347,6 +442,27 @@ function setupIPC() {
     } catch (error) {
       return { success: false, error: error.message }
     }
+  })
+
+  ipcMain.handle('settings-get-drift-watch', async () => {
+    try {
+      return {
+        success: true,
+        enabled: settingsService.getDriftWatchEnabled(),
+        intervalMinutes: settingsService.getDriftWatchIntervalMinutes(),
+        policy: settingsService.getDriftPolicy(),
+        protectedPaths: settingsService.getProtectedPaths()
+      }
+    } catch (error) { return { success: false, error: error.message } }
+  })
+  ipcMain.handle('settings-set-drift-watch', async (_event, cfg) => {
+    try {
+      const enabled = settingsService.setDriftWatchEnabled(!!(cfg && cfg.enabled))
+      const intervalMinutes = settingsService.setDriftWatchIntervalMinutes((cfg && cfg.intervalMinutes) || settingsService.getDriftWatchIntervalMinutes())
+      const policy = settingsService.setDriftPolicy((cfg && cfg.policy) || settingsService.getDriftPolicy())
+      const protectedPaths = settingsService.setProtectedPaths((cfg && cfg.protectedPaths) || settingsService.getProtectedPaths())
+      return { success: true, enabled, intervalMinutes, policy, protectedPaths }
+    } catch (error) { return { success: false, error: error.message } }
   })
   ipcMain.handle('settings-get-editor-name', async () => {
     try {
@@ -589,6 +705,54 @@ app.whenReady().then(async () => {
   try { await databaseService.initialize() } catch (e) {}
   try { await fileCacheService.initialize() } catch (e) {}
   createWindow(); createMenu(); setupIPC()
+
+  const startDriftWatcher = () => {
+    try {
+      if (!settingsService.getDriftWatchEnabled()) return
+      const intervalMs = settingsService.getDriftWatchIntervalMinutes() * 60 * 1000
+      const runCheck = async () => {
+        try {
+          const paths = await databaseService.getRecentVersionedPaths(30)
+          const policy = settingsService.getDriftPolicy()
+          const protectedPaths = new Set(settingsService.getProtectedPaths())
+          for (const p of paths) {
+            try {
+              const latest = await databaseService.getLatestFileVersion(null, p)
+              if (!latest) continue
+              let remoteContent = ''
+              try { remoteContent = await ftpService.downloadFile(p, null) } catch { continue }
+              const crypto = require('crypto')
+              const remoteHash = crypto.createHash('md5').update(String(remoteContent || '')).digest('hex')
+              if (remoteHash !== latest.content_hash) {
+                let user = null
+                try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+                const userId = user && user.id ? user.id : null
+                try { await databaseService.addFileVersion(null, p, userId, remoteContent, remoteHash, 'external_change', latest.id) } catch {}
+                try { await databaseService.addFileHistory(null, p, userId, 'external_change', remoteHash, 'Detected drift') } catch {}
+                const isProtected = protectedPaths.has(p)
+                if (policy === 'auto_restore' && isProtected) {
+                  try {
+                    await ftpService.uploadFile(latest.content || '', p)
+                    const restoreHash = latest.content_hash
+                    try { await databaseService.addFileVersion(null, p, userId, latest.content || '', restoreHash, 'revert', latest.id) } catch {}
+                    try { await databaseService.addFileHistory(null, p, userId, 'revert', restoreHash, 'Auto-restore after drift') } catch {}
+                  } catch {}
+                } else {
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+                  }
+                }
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+      runCheck()
+      setInterval(runCheck, intervalMs)
+    } catch {}
+  }
+
+  startDriftWatcher()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) { createWindow() } })
 })
 

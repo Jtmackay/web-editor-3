@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
-import { FileText, Server, Users, Settings, Search, ListChecks } from 'lucide-react'
+import { FileText, Server, Users, Settings, Search, ListChecks, History } from 'lucide-react'
 import FTPExplorer from './FTPExplorer'
 import UserPresence from './UserPresence'
 import SearchPanel from './SearchPanel'
 import TodoPanel from './TodoPanel'
+import HistoryPanel from './HistoryPanel'
 import { electronAPI } from '../utils/electronAPI'
 
 const Sidebar: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'todo' | 'users' | 'settings'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'todo' | 'users' | 'settings' | 'history'>('files')
   const [panelWidth, setPanelWidth] = useState<number>(260)
 
   const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -68,6 +69,15 @@ const Sidebar: React.FC = () => {
           title="To Do"
         >
           <ListChecks size={20} />
+        </button>
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`p-2 rounded transition-colors ${
+            activeTab === 'history' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
+          }`}
+          title="History"
+        >
+          <History size={20} />
         </button>
         <button
           onClick={() => setActiveTab('users')}
@@ -138,6 +148,14 @@ const Sidebar: React.FC = () => {
             <div className="flex-1 min-h-0 overflow-y-auto">
               <SettingsPanel />
             </div>
+          </div>
+        )}
+        {activeTab === 'history' && (
+          <div className="flex flex-col h-full">
+            <div className="p-3 border-b border-vscode-border">
+              <h3 className="text-sm font-semibold text-vscode-text">History</h3>
+            </div>
+            <HistoryPanel />
           </div>
         )}
       </div>

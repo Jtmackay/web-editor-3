@@ -89,6 +89,50 @@ class SettingsService {
     this.store.set('enablePreviewInspector', value)
     return value
   }
+  getDriftWatchEnabled() {
+    return !!this.store.get('driftWatchEnabled', true)
+  }
+  setDriftWatchEnabled(enabled) {
+    const v = !!enabled
+    this.store.set('driftWatchEnabled', v)
+    return v
+  }
+  getDriftWatchIntervalMinutes() {
+    const v = Number(this.store.get('driftWatchIntervalMinutes', 60))
+    return isNaN(v) ? 60 : Math.max(5, v)
+  }
+  setDriftWatchIntervalMinutes(mins) {
+    const v = Number(mins)
+    const safe = isNaN(v) ? 60 : Math.max(5, v)
+    this.store.set('driftWatchIntervalMinutes', safe)
+    return safe
+  }
+  getDriftPolicy() {
+    const raw = String(this.store.get('driftPolicy', 'alert'))
+    return raw === 'auto_restore' ? 'auto_restore' : 'alert'
+  }
+  setDriftPolicy(policy) {
+    const val = policy === 'auto_restore' ? 'auto_restore' : 'alert'
+    this.store.set('driftPolicy', val)
+    return val
+  }
+  getProtectedPaths() {
+    const list = this.store.get('protectedPaths', [])
+    return Array.isArray(list) ? list.map(String) : []
+  }
+  setProtectedPaths(paths) {
+    const safe = Array.isArray(paths) ? paths.map(String) : []
+    this.store.set('protectedPaths', safe)
+    return safe
+  }
+  getAutoSnapshotOnPublish() {
+    return !!this.store.get('autoSnapshotOnPublish', false)
+  }
+  setAutoSnapshotOnPublish(enabled) {
+    const v = !!enabled
+    this.store.set('autoSnapshotOnPublish', v)
+    return v
+  }
   getImagePickerStartPath() {
     const raw = this.store.get('imagePickerStartPath', '/')
     let p = raw ? String(raw) : '/'

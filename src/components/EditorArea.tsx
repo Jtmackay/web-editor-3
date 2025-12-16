@@ -1259,16 +1259,9 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
 
           // Persist patched HTML both to the local sync folder (for project search)
           // and directly to the FTP server so the remote file stays authoritative.
-          const htmlRes = await electronAPI.localSaveFile(htmlRemotePath, patched)
-          if (!htmlRes.success || !htmlRes.path) {
-            const msg = htmlRes.error || 'Failed to save patched HTML to local sync folder'
-            editorState.setError(msg)
-            editorState.setStatusMessage(null)
-            return
-          }
-
-          const ftpHtmlRes = await electronAPI.ftpUploadFile(htmlRes.path, htmlRemotePath)
-          if (ftpHtmlRes.success) {
+          const summary = `${textChanges.length} text change(s), ${inlineStyleChanges.length} inline style change(s)`
+          const pubRes = await electronAPI.publishFile?.({ remotePath: htmlRemotePath, content: patched, summary })
+          if (pubRes && pubRes.success) {
             savedHtml = true
             matchingFiles.forEach((file) => {
               editorState.setFileDirty(file.id, false)
@@ -1278,9 +1271,7 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
             )
             editorState.setError(null)
           } else {
-            const msg =
-              ftpHtmlRes.error ||
-              'Patched HTML saved to local sync folder, but failed to sync to server'
+            const msg = (pubRes && (pubRes as any).error) || 'Failed to publish HTML changes'
             editorState.setError(msg)
             editorState.setStatusMessage(null)
             return
@@ -1330,19 +1321,9 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           }
         }
 
-        const cssRes = await electronAPI.localSaveFile(remotePath, cssText)
-        if (!cssRes.success || !cssRes.path) {
-          const msg =
-            cssRes.error || `Failed to save stylesheet to local sync folder: ${remotePath}`
-          failedCssUploads.push(`${remotePath} (${msg})`)
-          continue
-        }
-
-        const ftpCssRes = await electronAPI.ftpUploadFile(cssRes.path, remotePath)
-        if (!ftpCssRes.success) {
-          const msg =
-            ftpCssRes.error ||
-            `Stylesheet saved to local sync folder but failed to sync to server: ${remotePath}`
+        const cssPub = await electronAPI.publishFile?.({ remotePath, content: cssText, summary: 'Inspector stylesheet changes' })
+        if (!cssPub || !cssPub.success) {
+          const msg = (cssPub && (cssPub as any).error) || `Failed to publish stylesheet: ${remotePath}`
           failedCssUploads.push(`${remotePath} (${msg})`)
           continue
         }

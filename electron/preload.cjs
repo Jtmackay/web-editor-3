@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ftpListAll: (path) => ipcRenderer.invoke('ftp-list-all', path),
   ftpDownloadFile: (remotePath, localPath) => ipcRenderer.invoke('ftp-download-file', remotePath, localPath),
   ftpUploadFile: (localPath, remotePath) => ipcRenderer.invoke('ftp-upload-file', localPath, remotePath),
+  publishFile: (payload) => ipcRenderer.invoke('publish-file', payload),
   ftpCreateDirectory: (remotePath) => ipcRenderer.invoke('ftp-create-directory', remotePath),
   ftpSyncToLocal: (remoteRoot, localRoot, ignorePatterns) => ipcRenderer.invoke('ftp-sync-to-local', remoteRoot, localRoot, ignorePatterns),
 
@@ -62,6 +63,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('db-set-active-file', userId, filePath, fileHash ?? null),
   dbRemoveActiveFile: (userId, filePath) => ipcRenderer.invoke('db-remove-active-file', userId, filePath),
   dbGetOrCreateDefaultUser: () => ipcRenderer.invoke('db-get-or-create-default-user'),
+  dbGetFileHistory: (filePath, limit) => ipcRenderer.invoke('db-get-file-history', { filePath, limit }),
+  dbGetFileVersions: (filePath, limit) => ipcRenderer.invoke('db-get-file-versions', { filePath, limit }),
+  dbRestoreFileVersion: (versionId) => ipcRenderer.invoke('db-restore-file-version', { versionId }),
   dbGetFTPConnections: (userId) => ipcRenderer.invoke('db-get-ftp-connections', userId),
   dbAddFTPConnection: (payload) => ipcRenderer.invoke('db-add-ftp-connection', payload),
   dbRemoveFTPConnection: (payload) => ipcRenderer.invoke('db-remove-ftp-connection', payload),
@@ -81,6 +85,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsSetPreviewStartAfter: (startAfter) => ipcRenderer.invoke('settings-set-preview-start-after', startAfter),
   settingsGetImagePickerStartPath: () => ipcRenderer.invoke('settings-get-image-picker-start-path'),
   settingsSetImagePickerStartPath: (path) => ipcRenderer.invoke('settings-set-image-picker-start-path', path),
+  settingsGetDriftWatch: () => ipcRenderer.invoke('settings-get-drift-watch'),
+  settingsSetDriftWatch: (cfg) => ipcRenderer.invoke('settings-set-drift-watch', cfg),
 
   settingsGetEditorName: () => ipcRenderer.invoke('settings-get-editor-name'),
   settingsSetEditorName: (name) => ipcRenderer.invoke('settings-set-editor-name', name),
@@ -124,6 +130,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ftp-sync-progress', handler)
     return () => {
       ipcRenderer.removeListener('ftp-sync-progress', handler)
+    }
+  },
+  onDriftDetected: (callback) => {
+    const handler = (event, payload) => callback(event, payload)
+    ipcRenderer.on('drift-detected', handler)
+    return () => {
+      ipcRenderer.removeListener('drift-detected', handler)
     }
   }
 })

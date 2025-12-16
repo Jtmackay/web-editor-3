@@ -10,6 +10,7 @@ declare global {
       ftpListAll: (path: string) => Promise<{ success: boolean; tree?: any[]; error?: string }>
       ftpDownloadFile: (remotePath: string, localPath: string) => Promise<{ success: boolean; content?: string; error?: string }>
       ftpUploadFile: (localPath: string, remotePath: string) => Promise<{ success: boolean; error?: string }>
+      publishFile?: (payload: { remotePath: string; content: string; summary?: string }) => Promise<{ success: boolean; path?: string; hash?: string; error?: string }>
       ftpCreateDirectory?: (remotePath: string) => Promise<{ success: boolean; error?: string }>
       ftpSyncToLocal: (remoteRoot: string, localRoot: string, ignorePatterns: string[]) => Promise<{ success: boolean; error?: string }>
 
@@ -25,6 +26,9 @@ declare global {
       dbSetActiveFile: (userId: string, filePath: string, fileHash?: string | null) => Promise<{ success: boolean; error?: string }>
       dbRemoveActiveFile: (userId: string, filePath: string) => Promise<{ success: boolean; error?: string }>
       dbGetOrCreateDefaultUser: () => Promise<{ success: boolean; user?: any; error?: string }>
+      dbGetFileHistory?: (filePath: string, limit?: number) => Promise<{ success: boolean; history?: any[]; error?: string }>
+      dbGetFileVersions?: (filePath: string, limit?: number) => Promise<{ success: boolean; versions?: any[]; error?: string }>
+      dbRestoreFileVersion?: (versionId: number) => Promise<{ success: boolean; error?: string }>
       dbGetFTPConnections: (userId: number) => Promise<{ success: boolean; connections?: any[]; error?: string }>
       dbAddFTPConnection: (payload: { userId: number; name: string; host: string; port: number; username: string; password: string; defaultPath: string }) => Promise<{ success: boolean; connection?: any; error?: string }>
       dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => Promise<{ success: boolean; removed?: any; error?: string }>
@@ -42,6 +46,8 @@ declare global {
       settingsSetPreviewBaseUrl: (baseUrl: string) => Promise<{ success: boolean; baseUrl?: string; error?: string }>
       settingsGetPreviewStartAfter: () => Promise<{ success: boolean; startAfter?: string; error?: string }>
       settingsSetPreviewStartAfter: (startAfter: string) => Promise<{ success: boolean; startAfter?: string; error?: string }>
+      settingsGetDriftWatch?: () => Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>
+      settingsSetDriftWatch?: (cfg: { enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[] }) => Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>
       openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
 
       settingsGetEditorName: () => Promise<{ success: boolean; name?: string; error?: string }>
@@ -76,6 +82,7 @@ declare global {
       // Menu event listeners
       onMenuEvent: (callback: (event: any, action: string) => void) => () => void
       onSyncProgress?: (callback: (event: any, payload: { count: number }) => void) => () => void
+      onDriftDetected?: (callback: (event: any, payload: { path: string }) => void) => () => void
 
       // DevTools helpers
       inspectElementAt?: (x: number, y: number) => Promise<{ success: boolean; error?: string }>
@@ -92,6 +99,7 @@ export const electronAPI = {
   ftpListAll: (path: string) => (window.electronAPI && typeof window.electronAPI.ftpListAll === 'function') ? window.electronAPI.ftpListAll(path) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpDownloadFile: (remotePath: string, localPath: string) => (window.electronAPI && typeof window.electronAPI.ftpDownloadFile === 'function') ? window.electronAPI.ftpDownloadFile(remotePath, localPath) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpUploadFile: (localPath: string, remotePath: string) => (window.electronAPI && typeof window.electronAPI.ftpUploadFile === 'function') ? window.electronAPI.ftpUploadFile(localPath, remotePath) : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  publishFile: (payload: { remotePath: string; content: string; summary?: string }) => (window.electronAPI && typeof window.electronAPI.publishFile === 'function') ? window.electronAPI.publishFile(payload) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpCreateDirectory: (remotePath: string) => (window.electronAPI && typeof window.electronAPI.ftpCreateDirectory === 'function') ? window.electronAPI.ftpCreateDirectory(remotePath) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpSyncToLocal: (remoteRoot: string, localRoot: string, ignorePatterns: string[]) =>
     (window.electronAPI && typeof window.electronAPI.ftpSyncToLocal === 'function')
@@ -110,6 +118,9 @@ export const electronAPI = {
     Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbRemoveActiveFile: (userId: string, filePath: string) => window.electronAPI?.dbRemoveActiveFile(userId, filePath) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetOrCreateDefaultUser: () => window.electronAPI?.dbGetOrCreateDefaultUser() || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  dbGetFileHistory: (filePath: string, limit?: number) => (window.electronAPI && typeof window.electronAPI.dbGetFileHistory === 'function') ? window.electronAPI.dbGetFileHistory(filePath, limit) : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  dbGetFileVersions: (filePath: string, limit?: number) => (window.electronAPI && typeof window.electronAPI.dbGetFileVersions === 'function') ? window.electronAPI.dbGetFileVersions(filePath, limit) : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  dbRestoreFileVersion: (versionId: number) => (window.electronAPI && typeof window.electronAPI.dbRestoreFileVersion === 'function') ? window.electronAPI.dbRestoreFileVersion(versionId) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetFTPConnections: (userId: number) => window.electronAPI?.dbGetFTPConnections(userId) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbAddFTPConnection: (payload: { userId: number; name: string; host: string; port: number; username: string; password: string; defaultPath: string }) => window.electronAPI?.dbAddFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => window.electronAPI?.dbRemoveFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
@@ -169,6 +180,14 @@ export const electronAPI = {
           success: false,
           error: 'Electron API not available'
         }),
+  settingsGetDriftWatch: (): Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsGetDriftWatch === 'function')
+      ? window.electronAPI.settingsGetDriftWatch()
+      : Promise.resolve<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>({ success: true, enabled: true, intervalMinutes: 60, policy: 'alert', protectedPaths: [] }),
+  settingsSetDriftWatch: (cfg: { enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[] }): Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsSetDriftWatch === 'function')
+      ? window.electronAPI.settingsSetDriftWatch(cfg)
+      : Promise.resolve<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>({ success: false, error: 'Electron API not available' }),
   settingsGetEditorName: (): Promise<{ success: boolean; name?: string; error?: string }> =>
     (window.electronAPI && typeof window.electronAPI.settingsGetEditorName === 'function')
       ? window.electronAPI.settingsGetEditorName()
@@ -236,6 +255,12 @@ export const electronAPI = {
   onSyncProgress: (callback: (event: any, payload: { count: number }) => void) => {
     if (window.electronAPI?.onSyncProgress) {
       return window.electronAPI.onSyncProgress(callback)
+    }
+    return () => {}
+  },
+  onDriftDetected: (callback: (event: any, payload: { path: string }) => void) => {
+    if (window.electronAPI?.onDriftDetected) {
+      return window.electronAPI.onDriftDetected(callback)
     }
     return () => {}
   }

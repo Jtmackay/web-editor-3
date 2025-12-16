@@ -137,7 +137,6 @@ const EditorTabs: React.FC = () => {
     let newHash: string | null = null
 
     if (uid) {
-      // Compute the hash we are about to save and check for potential conflicts.
       newHash = await computeContentHash(file.content)
       const activeRes = await electronAPI.dbGetActiveFiles()
       if (activeRes.success && activeRes.files) {
@@ -151,57 +150,38 @@ const EditorTabs: React.FC = () => {
           const lastModifiedMs = other.last_modified
             ? new Date(other.last_modified as string).getTime()
             : 0
-          const activeRecently = lastModifiedMs > now - 10 * 60 * 1000 // last 10 minutes
-
+          const activeRecently = lastModifiedMs > now - 10 * 60 * 1000
           if (!activeRecently) continue
-
           if (otherHash && newHash && otherHash !== newHash) {
             conflictingUsers.push(other.username || `User #${other.user_id}`)
           } else if (!otherHash) {
-            // We know someone else has the file open and was active recently,
-            // but we don't know their content; still worth a warning.
             conflictingUsers.push(other.username || `User #${other.user_id}`)
           }
         }
-
         if (conflictingUsers.length > 0) {
           const proceed = window.confirm(
-            `Warning: ${conflictingUsers.join(
-              ', ',
-            )} also ha${conflictingUsers.length === 1 ? 's' : 've'
-            } recent changes on this file.\n\n` +
-              'Saving now may overwrite their edits.\n\n' +
-              'Do you want to continue and upload your version?',
+            `Warning: ${conflictingUsers.join(', ')} also ha${conflictingUsers.length === 1 ? 's' : 've'} recent changes on this file.\n\nSaving now may overwrite their edits.\n\nDo you want to continue and upload your version?`,
           )
-          if (!proceed) {
-            return
-          }
+          if (!proceed) return
         }
       }
     }
 
-    const localRes = await electronAPI.localSaveFile(file.path, file.content)
-    if (!localRes.success || !localRes.path) {
-      store.setError(localRes.error || 'Failed to save file to sync folder')
-      store.setStatusMessage(null)
-      return
-    }
-    const ftpRes = await electronAPI.ftpUploadFile(localRes.path, file.path)
-    if (ftpRes.success) {
+    const summary = 'Editor Save & Sync'
+    const pubRes = await electronAPI.publishFile?.({ remotePath: file.path, content: file.content, summary })
+    if (pubRes && pubRes.success) {
       store.setFileDirty(file.id, false)
       store.setStatusMessage(`Saved and synced to server: ${file.path}`)
       store.setError(null)
-       try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
+      try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
       if (uid) {
         try {
           const hashToStore = newHash ?? (await computeContentHash(file.content))
           await electronAPI.dbSetActiveFile(String(uid), file.path, hashToStore)
-        } catch {
-          // Presence/hash updates are best-effort; ignore errors here.
-        }
+        } catch {}
       }
     } else {
-      store.setError(ftpRes.error || 'File saved locally, but failed to sync to server')
+      store.setError((pubRes && (pubRes as any).error) || 'Failed to publish file')
       store.setStatusMessage(null)
     }
   }
