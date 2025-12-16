@@ -44,9 +44,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ftpConnect: (config) => ipcRenderer.invoke('ftp-connect', config),
   ftpDisconnect: () => ipcRenderer.invoke('ftp-disconnect'),
   ftpListFiles: (path) => ipcRenderer.invoke('ftp-list-files', path),
+  ftpListFilesReadonly: (path) => ipcRenderer.invoke('ftp-list-files-readonly', path),
   ftpListAll: (path) => ipcRenderer.invoke('ftp-list-all', path),
   ftpDownloadFile: (remotePath, localPath) => ipcRenderer.invoke('ftp-download-file', remotePath, localPath),
   ftpUploadFile: (localPath, remotePath) => ipcRenderer.invoke('ftp-upload-file', localPath, remotePath),
+  ftpCreateDirectory: (remotePath) => ipcRenderer.invoke('ftp-create-directory', remotePath),
   ftpSyncToLocal: (remoteRoot, localRoot, ignorePatterns) => ipcRenderer.invoke('ftp-sync-to-local', remoteRoot, localRoot, ignorePatterns),
 
   fileCacheGet: (filePath) => ipcRenderer.invoke('file-cache-get', filePath),
@@ -77,6 +79,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settingsSetPreviewBaseUrl: (baseUrl) => ipcRenderer.invoke('settings-set-preview-base-url', baseUrl),
   settingsGetPreviewStartAfter: () => ipcRenderer.invoke('settings-get-preview-start-after'),
   settingsSetPreviewStartAfter: (startAfter) => ipcRenderer.invoke('settings-set-preview-start-after', startAfter),
+  settingsGetImagePickerStartPath: () => ipcRenderer.invoke('settings-get-image-picker-start-path'),
+  settingsSetImagePickerStartPath: (path) => ipcRenderer.invoke('settings-set-image-picker-start-path', path),
 
   settingsGetEditorName: () => ipcRenderer.invoke('settings-get-editor-name'),
   settingsSetEditorName: (name) => ipcRenderer.invoke('settings-set-editor-name', name),

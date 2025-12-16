@@ -343,6 +343,7 @@ interface InspectPanelProps {
      */
     ruleChangeSources?: string[]
   }) => void
+  onRequestInsertImage?: (targetPath: string) => void
 }
 
 const InspectPanel: React.FC<InspectPanelProps> = ({
@@ -396,6 +397,7 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
   const changeIdRef = useRef(0)
   const lastTextChangeTokenRef = useRef<number | null>(null)
   const lastResetTokenRef = useRef<number | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ path: string; x: number; y: number } | null>(null)
 
   useEffect(() => {
     // Reset changed markers when switching to a different element
@@ -677,6 +679,14 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
           }`}
           style={{ paddingLeft: `${paddingLeft + 8}px` }}
           onClick={() => onSelectElement(node.path)}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            const rect = panelRef.current?.getBoundingClientRect()
+            const baseX = rect ? rect.left : 0
+            const baseY = rect ? rect.top : 0
+            setContextMenu({ path: node.path, x: e.clientX - baseX, y: e.clientY - baseY })
+          }}
         >
           {hasChildren ? (
             <button
@@ -1803,9 +1813,33 @@ const InspectPanel: React.FC<InspectPanelProps> = ({
           </div>
         </div>
       )}
+
+      {contextMenu && (
+        <div
+          className="absolute z-50 bg-[#1e1e1e] border border-gray-700 rounded shadow-lg text-xs min-w-[160px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="block w-full text-left px-3 py-2 hover:bg-[#2a2d2e]"
+            onClick={() => {
+              const p = contextMenu.path
+              setContextMenu(null)
+              if (p && typeof onRequestInsertImage === 'function') {
+                onRequestInsertImage(p)
+              }
+              try {
+                const ev: any = new CustomEvent('open-image-picker', { detail: { path: p } })
+                window.dispatchEvent(ev)
+              } catch {}
+            }}
+          >
+            Insert Image
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
 export default InspectPanel
-

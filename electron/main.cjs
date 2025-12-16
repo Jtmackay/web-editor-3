@@ -154,6 +154,11 @@ function setupIPC() {
       try { const files = await ftpService.listFiles(p); return { success: true, files } } catch (error) { return { success: false, error: error.message } }
     })
   })
+  ipcMain.handle('ftp-list-files-readonly', async (event, p = '/') => {
+    return runQueued(async () => {
+      try { const files = await ftpService.listFilesReadonly(p); return { success: true, files } } catch (error) { return { success: false, error: error.message } }
+    })
+  })
   ipcMain.handle('ftp-list-all', async (event, p = '/') => {
     return runQueued(async () => {
       try {
@@ -172,6 +177,11 @@ function setupIPC() {
   ipcMain.handle('ftp-upload-file', async (event, localPath, remotePath) => {
     return runQueued(async () => {
       try { await ftpService.uploadFile(localPath, remotePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
+    })
+  })
+  ipcMain.handle('ftp-create-directory', async (event, remotePath) => {
+    return runQueued(async () => {
+      try { await ftpService.createDirectory(remotePath); return { success: true } } catch (error) { return { success: false, error: error.message } }
     })
   })
   ipcMain.handle('ftp-sync-to-local', async (event, remoteRoot, localRoot, ignorePatterns) => {
@@ -358,6 +368,22 @@ function setupIPC() {
     try {
       const saved = settingsService.setPreviewStartAfter(startAfter)
       return { success: true, startAfter: saved }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-get-image-picker-start-path', async () => {
+    try {
+      const p = settingsService.getImagePickerStartPath()
+      return { success: true, path: p }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+  ipcMain.handle('settings-set-image-picker-start-path', async (_event, pathArg) => {
+    try {
+      const saved = settingsService.setImagePickerStartPath(pathArg)
+      return { success: true, path: saved }
     } catch (error) {
       return { success: false, error: error.message }
     }

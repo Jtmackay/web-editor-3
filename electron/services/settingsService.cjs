@@ -89,6 +89,20 @@ class SettingsService {
     this.store.set('enablePreviewInspector', value)
     return value
   }
+  getImagePickerStartPath() {
+    const raw = this.store.get('imagePickerStartPath', '/')
+    let p = raw ? String(raw) : '/'
+    p = p.replace(/\\/g, '/')
+    if (!p.startsWith('/')) p = '/' + p
+    return p
+  }
+  setImagePickerStartPath(path) {
+    let p = path ? String(path) : '/'
+    p = p.replace(/\\/g, '/')
+    if (!p.startsWith('/')) p = '/' + p
+    this.store.set('imagePickerStartPath', p)
+    return p
+  }
 }
 
 module.exports = { SettingsService }

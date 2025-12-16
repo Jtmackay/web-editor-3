@@ -43,6 +43,19 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
   const [resetChangesToken, setResetChangesToken] = useState(0)
   const scrollPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const [allowInspector, setAllowInspector] = useState(false)
+  const [imagePicker, setImagePicker] = useState<{
+    mode: 'dom' | 'editor'
+    targetPath?: string
+    currentDir: string
+    entries: { name: string; path: string; type: 'file' | 'directory' }[]
+    loading: boolean
+    error: string | null
+    view?: 'list' | 'gallery'
+    selectionPath?: string
+    altText?: string
+    className?: string
+  } | null>(null)
+  const [uploadModal, setUploadModal] = useState<{ file?: File; convertWebp: boolean; makeSmall: boolean; smallWidth: number; error: string | null; uploading: boolean } | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -72,6 +85,37 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
     }
     window.addEventListener('preview:reload', handler as any)
     return () => window.removeEventListener('preview:reload', handler as any)
+  }, [])
+
+  useEffect(() => {
+    const onOpenPickerEditor = () => {
+      openImagePickerEditor()
+    }
+    window.addEventListener('open-image-picker-editor', onOpenPickerEditor)
+    return () => {
+      window.removeEventListener('open-image-picker-editor', onOpenPickerEditor)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onOpenPicker = (e: Event) => {
+      try {
+        const d = (e as CustomEvent).detail as any
+        const path = d && typeof d.path === 'string' ? d.path : ''
+        if (path) {
+          openImagePicker(path)
+        }
+      } catch {}
+    }
+    window.addEventListener('open-image-picker', onOpenPicker as any)
+    const onMessage = (ev: MessageEvent) => {
+      try { if (ev.data && ev.data.type === 'open-image-picker-editor') { openEditorPicker() } } catch {}
+    }
+    window.addEventListener('message', onMessage)
+    return () => {
+      window.removeEventListener('open-image-picker', onOpenPicker as any)
+      window.removeEventListener('message', onMessage)
+    }
   }, [])
 
   useEffect(() => {
@@ -454,6 +498,236 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
     } catch (err) {
       console.error('Failed to update inline style:', err)
     }
+  }
+
+  const openImagePicker = async (targetPath: string) => {
+    let startPath = '/'
+    try {
+      const res = await electronAPI.settingsGetImagePickerStartPath?.()
+      if (res && res.success && typeof res.path === 'string' && res.path.trim()) {
+        startPath = res.path
+      }
+    } catch {}
+    setImagePicker({ mode: 'dom', targetPath, currentDir: startPath, entries: [], loading: true, error: null })
+    try {
+      const list = await electronAPI.ftpListFilesReadonly?.(startPath) || await electronAPI.ftpListFiles(startPath)
+      if (list.success && Array.isArray(list.files)) {
+        const mapped = list.files.map((item: any) => {
+          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
+          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
+        })
+        setImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
+      } else {
+        setImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
+      }
+    } catch (err) {
+      setImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
+    }
+  }
+
+  const openImagePickerEditor = async () => {
+    let startPath = '/'
+    try {
+      const res = await electronAPI.settingsGetImagePickerStartPath?.()
+      if (res && res.success && typeof res.path === 'string' && res.path.trim()) {
+        startPath = res.path
+      }
+    } catch {}
+    setImagePicker({ mode: 'editor', currentDir: startPath, entries: [], loading: true, error: null })
+    try {
+      const list = await electronAPI.ftpListFilesReadonly?.(startPath) || await electronAPI.ftpListFiles(startPath)
+      if (list.success && Array.isArray(list.files)) {
+        const mapped = list.files.map((item: any) => {
+          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
+          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
+        })
+        setImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
+      } else {
+        setImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
+      }
+    } catch (err) {
+      setImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
+    }
+  }
+
+  const navigateImagePicker = async (dir: string) => {
+    setImagePicker((prev) => (prev ? { ...prev, currentDir: dir, loading: true, error: null } : prev))
+    try {
+      const list = await electronAPI.ftpListFilesReadonly?.(dir) || await electronAPI.ftpListFiles(dir)
+      if (list.success && Array.isArray(list.files)) {
+        const mapped = list.files.map((item: any) => {
+          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
+          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
+        })
+        setImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
+      } else {
+        setImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
+      }
+    } catch (err) {
+      setImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
+    }
+  }
+
+  const insertImageAtPath = async (targetPath: string, imageRemotePath: string, altText?: string, className?: string) => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    try {
+      const iframeDoc = iframe.contentWindow?.document
+      const el = iframeDoc?.querySelector(targetPath) as HTMLElement | null
+      if (!el) return
+      const beforeHtml = el.innerHTML || ''
+      const img = iframeDoc!.createElement('img')
+      let finalSrc = imageRemotePath
+      try {
+        const startAfterRes = await electronAPI.settingsGetPreviewStartAfter()
+        const startAfter = (startAfterRes.success && startAfterRes.startAfter ? startAfterRes.startAfter : '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+        const p = String(imageRemotePath || '').replace(/\\/g, '/')
+        const rel = p.replace(/^\/+/, '')
+        if (startAfter) {
+          const lowerRel = rel.toLowerCase()
+          const lowerStart = startAfter.toLowerCase()
+          if (lowerRel.startsWith(lowerStart + '/') || lowerRel === lowerStart) {
+            let trimmed = rel.slice(startAfter.length)
+            trimmed = trimmed.replace(/^\/+/, '')
+            finalSrc = '/' + trimmed
+          } else {
+            finalSrc = p.startsWith('/') ? p : '/' + p
+          }
+        } else {
+          finalSrc = p.startsWith('/') ? p : '/' + p
+        }
+      } catch {}
+      img.setAttribute('src', finalSrc)
+      if (altText) img.setAttribute('alt', altText)
+      if (className) img.setAttribute('class', className)
+      el.appendChild(img)
+      const afterHtml = el.innerHTML || ''
+      setLatestTextChange({
+        token: ++textChangeTokenRef.current,
+        path: targetPath,
+        oldText: beforeHtml,
+        newText: afterHtml,
+        kind: 'html'
+      })
+    } catch (err) {
+      console.error('Failed to insert image:', err)
+    }
+  }
+
+  const buildPreviewUrlForResource = async (remotePath: string): Promise<string | null> => {
+    const normalizedPath = String(remotePath || '').replace(/\\/g, '/')
+    const [baseRes, startAfterRes] = await Promise.all([
+      electronAPI.settingsGetPreviewBaseUrl(),
+      electronAPI.settingsGetPreviewStartAfter()
+    ])
+    const baseRaw = (baseRes.success && baseRes.baseUrl ? baseRes.baseUrl : '').trim()
+    if (!baseRaw) return null
+    const hasProtocol = /^https?:\/\//i.test(baseRaw)
+    const base = (hasProtocol ? baseRaw : `https://${baseRaw}`).replace(/\/+$/, '')
+    const startAfterRaw = (startAfterRes.success && startAfterRes.startAfter ? startAfterRes.startAfter : '').replace(/\\/g, '/').replace(/^\/+/, '')
+    let urlPath = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath
+    if (startAfterRaw) {
+      const rel = normalizedPath.replace(/^\/+/, '')
+      const lowerRel = rel.toLowerCase()
+      const lowerStart = startAfterRaw.toLowerCase()
+      if (lowerRel.startsWith(lowerStart + '/') || lowerRel === lowerStart) {
+        let trimmed = rel.slice(startAfterRaw.length)
+        trimmed = trimmed.replace(/^\/+/, '')
+        urlPath = '/' + trimmed
+      }
+    }
+    return encodeURI(`${base}${urlPath}`)
+  }
+
+  const buildImgTagFromRemote = async (remotePath: string, altText?: string, className?: string): Promise<string> => {
+    let finalSrc = remotePath
+    try {
+      const startAfterRes = await electronAPI.settingsGetPreviewStartAfter()
+      const startAfter = (startAfterRes.success && startAfterRes.startAfter ? startAfterRes.startAfter : '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+      const p = String(remotePath || '').replace(/\\/g, '/')
+      const rel = p.replace(/^\/+/, '')
+      if (startAfter) {
+        const lowerRel = rel.toLowerCase()
+        const lowerStart = startAfter.toLowerCase()
+        if (lowerRel.startsWith(lowerStart + '/') || lowerRel === lowerStart) {
+          let trimmed = rel.slice(startAfter.length)
+          trimmed = trimmed.replace(/^\/+/, '')
+          finalSrc = '/' + trimmed
+        } else {
+          finalSrc = p.startsWith('/') ? p : '/' + p
+        }
+      } else {
+        finalSrc = p.startsWith('/') ? p : '/' + p
+      }
+    } catch {}
+    const altAttr = altText && altText.trim() ? ` alt="${altText.trim()}"` : ''
+    const classAttr = className && className.trim() ? ` class="${className.trim()}"` : ''
+    return `<img src="${finalSrc}"${altAttr}${classAttr}>`
+  }
+
+  const GalleryItem: React.FC<{ ent: { name: string; path: string }; onPickRemote: (remotePath: string) => void }> = ({ ent, onPickRemote }) => {
+    const [src, setSrc] = useState<string>('')
+    const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
+    useEffect(() => {
+      let alive = true
+      ;(async () => {
+        const url = await buildPreviewUrlForResource(ent.path)
+        if (alive) setSrc(url || ent.path)
+      })()
+      return () => { alive = false }
+    }, [ent.path])
+    return (
+      <div className="inline-flex flex-col items-center justify-start p-2 m-1 w-32 h-40 border border-vscode-border rounded hover:bg-vscode-hover cursor-pointer"
+        onClick={() => onPickRemote(ent.path)}
+      >
+        <img className="w-28 h-24 object-cover border border-vscode-border rounded" src={src || ''} alt={ent.name} onLoad={(e) => { const t = e.currentTarget as HTMLImageElement; setDims({ w: t.naturalWidth, h: t.naturalHeight }) }} />
+        <span className="mt-1 text-[10px] truncate w-full text-center">{ent.name}</span>
+        <span className="text-[10px] w-full text-center">{dims ? `${dims.w}×${dims.h}` : ''}</span>
+      </div>
+    )
+  }
+
+  const processUploadFile = async (
+    file: File,
+    convertWebp: boolean,
+    smallWidth: number
+  ): Promise<{ originalDataUrl: string; smallDataUrl: string; baseName: string; originalExt: string; finalExt: string }> => {
+    const readAsDataURL = (f: File) => new Promise<string>((resolve, reject) => {
+      const fr = new FileReader()
+      fr.onload = () => resolve(String(fr.result || ''))
+      fr.onerror = reject
+      fr.readAsDataURL(f)
+    })
+    const dataUrl = await readAsDataURL(file)
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image()
+      im.onload = () => resolve(im)
+      im.onerror = reject
+      im.src = dataUrl
+    })
+    const createResized = (srcImg: HTMLImageElement, targetW: number, type: string) => {
+      const ratio = srcImg.naturalHeight / srcImg.naturalWidth
+      const w = targetW
+      const h = Math.round(w * ratio)
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(srcImg, 0, 0, w, h)
+      const quality = 0.86
+      return canvas.toDataURL(type, quality)
+    }
+    const name = file.name || 'image'
+    const parts = name.split('.')
+    const baseName = parts.slice(0, -1).join('.') || parts[0]
+    const originalExt = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : 'png'
+    const finalExt = convertWebp ? 'webp' : originalExt
+    const originalType = convertWebp ? 'image/webp' : (file.type || `image/${originalExt}`)
+    const originalDataUrl = convertWebp
+      ? createResized(img, img.naturalWidth, 'image/webp')
+      : dataUrl
+    const smallDataUrl = createResized(img, Math.max(1, smallWidth || 400), convertWebp ? 'image/webp' : originalType)
+    return { originalDataUrl, smallDataUrl, baseName, originalExt, finalExt }
   }
 
   const handleUpdateRuleStyle = (
@@ -1204,6 +1478,18 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
               Edit text
             </button>
             <button
+              className="block w-full text-left px-3 py-2 hover:bg-vscode-hover border-b border-vscode-border"
+              onClick={() => {
+                const path = pendingElement?.path
+                setContextMenu(null)
+                if (path) {
+                  openImagePicker(path)
+                }
+              }}
+            >
+              Insert Image
+            </button>
+            <button
               className="block w-full text-left px-3 py-2 hover:bg-vscode-hover"
               onClick={() => {
                 setContextMenu(null)
@@ -1230,8 +1516,8 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
             )}
           </div>
         )}
-        {editingText && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40">
+      {editingText && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
             <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[420px] max-w-[90%] p-4">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold">Edit text</h2>
@@ -1298,6 +1584,184 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
             </div>
           </div>
         )}
+        {imagePicker && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40">
+            <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[1200px] max-w-[95vw] max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold">Insert Image</h2>
+                <button className="text-xs px-2 py-1 rounded hover:bg-vscode-hover" onClick={() => setImagePicker(null)}>Close</button>
+              </div>
+              <div className="mb-2 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={imagePicker.currentDir}
+                  onChange={(e) => setImagePicker((prev) => (prev ? { ...prev, currentDir: e.target.value } : prev))}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter') {
+                      await navigateImagePicker(imagePicker.currentDir)
+                    }
+                  }}
+                  className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs"
+                  placeholder="/path/to/images"
+                />
+                <button
+                  className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                  onClick={async () => {
+                    await navigateImagePicker(imagePicker.currentDir)
+                  }}
+                >Go</button>
+                <div className="ml-auto flex items-center gap-1 text-xs">
+                  <span>View:</span>
+                  <button
+                    className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                    onClick={() => {
+                      setImagePicker((prev) => (prev ? { ...prev, view: 'list' } as any : prev))
+                    }}
+                  >List</button>
+                  <button
+                    className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                    onClick={() => {
+                      setImagePicker((prev) => (prev ? { ...prev, view: 'gallery' } as any : prev))
+                    }}
+                  >Gallery</button>
+                </div>
+              </div>
+              <div className="mb-2 flex items-center gap-2">
+                <button className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setUploadModal({ file: undefined, convertWebp: false, makeSmall: true, smallWidth: 400, error: null, uploading: false })}>Upload…</button>
+              </div>
+              <div className="border border-vscode-border rounded h-[520px] overflow-auto vscode-scrollbar">
+                {imagePicker.loading ? (
+                  <div className="p-3 text-xs text-vscode-text-muted">Loading…</div>
+                ) : imagePicker.error ? (
+                  <div className="p-3 text-xs text-red-400">{imagePicker.error}</div>
+                ) : (
+                  <div>
+                    {((imagePicker as any).view === 'gallery' ? imagePicker.entries.filter((e) => e.type === 'file' && /\.(png|jpg|jpeg|gif|bmp|svg|webp)$/i.test(e.name)) : imagePicker.entries).map((ent) => (
+                      (imagePicker as any).view === 'gallery' && ent.type === 'file' ? (
+                        <GalleryItem
+                          key={ent.path}
+                          ent={{ name: ent.name, path: ent.path }}
+                          onPickRemote={async (remotePath) => {
+                            setImagePicker((prev) => (prev ? { ...prev, selectionPath: remotePath, altText: '', className: '' } : prev))
+                          }}
+                        />
+                      ) : (
+                        <div key={ent.path} className="flex items-center justify-between px-3 py-1 text-xs hover:bg-vscode-hover cursor-pointer"
+                          onClick={async () => {
+                            if (ent.type === 'directory') {
+                              await navigateImagePicker(ent.path)
+                            } else {
+                              setImagePicker((prev) => (prev ? { ...prev, selectionPath: ent.path, altText: '', className: '' } : prev))
+                            }
+                          }}
+                        >
+                          <span>{ent.name}</span>
+                          <span className="text-vscode-text-muted">{ent.type === 'directory' ? 'folder' : 'file'}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                )}
+              </div>
+              {imagePicker.selectionPath && (
+                <div className="mt-3 border-t border-vscode-border pt-3">
+                  <div className="mb-2 text-xs">Selected: {imagePicker.selectionPath}</div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="alt text"
+                      value={imagePicker.altText || ''}
+                      onChange={(e) => setImagePicker((prev) => (prev ? { ...prev, altText: e.target.value } : prev))}
+                      className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs"
+                    />
+                    <input
+                      type="text"
+                      placeholder="css class"
+                      value={imagePicker.className || ''}
+                      onChange={(e) => setImagePicker((prev) => (prev ? { ...prev, className: e.target.value } : prev))}
+                      className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 text-xs">
+                    <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setImagePicker((prev) => (prev ? { ...prev, selectionPath: undefined } : prev))}>Back</button>
+                    <button className="px-2 py-1 rounded bg-vscode-accent text-white hover:bg-blue-600" onClick={async () => {
+                      const remote = imagePicker.selectionPath || ''
+                      if (!remote) return
+                      if (imagePicker.mode === 'editor') {
+                        const tag = await buildImgTagFromRemote(remote, imagePicker.altText || '', imagePicker.className || '')
+                        window.dispatchEvent(new CustomEvent('insert-img-into-editor', { detail: { html: tag } }))
+                        setImagePicker(null)
+                      } else {
+                        await insertImageAtPath(imagePicker.targetPath!, remote, imagePicker.altText || '', imagePicker.className || '')
+                        setImagePicker(null)
+                      }
+                    }}>Insert</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {uploadModal && (
+          <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/40">
+            <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[560px] max-w-[95vw] p-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold">Upload Image</h2>
+                <button className="text-xs px-2 py-1 rounded hover:bg-vscode-hover" onClick={() => setUploadModal(null)}>Close</button>
+              </div>
+              <div className="space-y-2">
+                <input type="file" accept="image/*" className="text-xs" onChange={(e) => {
+                  const f = e.currentTarget.files && e.currentTarget.files[0]
+                  setUploadModal((prev) => (prev ? { ...prev, file: f, error: null } : prev))
+                }} />
+                <label className="inline-flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={uploadModal.convertWebp} onChange={(e) => setUploadModal((prev) => (prev ? { ...prev, convertWebp: e.target.checked } : prev))} />
+                  Convert to WebP
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={uploadModal.makeSmall} onChange={(e) => setUploadModal((prev) => (prev ? { ...prev, makeSmall: e.target.checked } : prev))} />
+                  Create resized version
+                </label>
+                <div className="flex items-center gap-2 text-xs">
+                  <span>Width</span>
+                  <input type="number" value={uploadModal.smallWidth} min={1} className="w-20 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded" onChange={(e) => setUploadModal((prev) => (prev ? { ...prev, smallWidth: Number(e.target.value) || 400 } : prev))} />
+                </div>
+              </div>
+              {uploadModal.error && <div className="mt-2 text-xs text-red-400">{uploadModal.error}</div>}
+              <div className="mt-3 flex justify-end gap-2 text-xs">
+                <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setUploadModal(null)}>Cancel</button>
+                <button className={`px-2 py-1 rounded ${uploadModal.uploading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-accent text-white hover:bg-blue-600'}`} disabled={uploadModal.uploading} onClick={async () => {
+                  const f = uploadModal.file
+                  if (!f) { setUploadModal((prev) => (prev ? { ...prev, error: 'Choose a file' } : prev)); return }
+                  try {
+                    setUploadModal((prev) => (prev ? { ...prev, uploading: true, error: null } : prev))
+                    const { originalDataUrl, smallDataUrl, baseName, finalExt } = await processUploadFile(f, uploadModal.convertWebp, uploadModal.smallWidth)
+                    const baseDir = imagePicker?.currentDir || '/'
+                    let normalizedDir = baseDir.replace(/\\/g, '/').replace(/\/+$/, '')
+                    if (!normalizedDir.startsWith('/')) normalizedDir = '/' + normalizedDir
+                    const originalRemote = `${normalizedDir}/${baseName}.${finalExt}`
+                    const smallRemote = `${normalizedDir}/${baseName}_small.${finalExt}`
+                    await electronAPI.ftpCreateDirectory?.(normalizedDir)
+                    const oRes = await electronAPI.ftpUploadFile(originalDataUrl, originalRemote)
+                    let sRes = { success: true }
+                    if (uploadModal.makeSmall) {
+                      sRes = await electronAPI.ftpUploadFile(smallDataUrl, smallRemote)
+                    }
+                    if (!oRes.success || !sRes.success) {
+                      setUploadModal((prev) => (prev ? { ...prev, uploading: false, error: 'Upload failed' } : prev))
+                    } else {
+                      setUploadModal(null)
+                      await navigateImagePicker(baseDir)
+                      setImagePicker((prev) => (prev ? { ...prev, selectionPath: uploadModal.makeSmall ? smallRemote : originalRemote } : prev))
+                    }
+                  } catch (err) {
+                    setUploadModal((prev) => (prev ? { ...prev, uploading: false, error: 'Upload failed' } : prev))
+                  }
+                }}>Upload</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       {showInspect && allowInspector && (
         <InspectPanel
@@ -1333,7 +1797,82 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           latestTextChange={latestTextChange}
           resetChangesToken={resetChangesToken}
           onSaveChanges={handleSaveInspectorChanges}
+          onRequestInsertImage={(targetPath) => {
+            openImagePicker(targetPath)
+          }}
         />
+      )}
+      {editorImagePicker && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40">
+          <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[1200px] max-w-[95vw] max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">Insert Image</h2>
+              <button className="text-xs px-2 py-1 rounded hover:bg-vscode-hover" onClick={() => setEditorImagePicker(null)}>Close</button>
+            </div>
+            <div className="mb-2 flex items-center gap-2">
+              <input
+                type="text"
+                value={editorImagePicker.currentDir}
+                onChange={(e) => setEditorImagePicker((prev) => (prev ? { ...prev, currentDir: e.target.value } : prev))}
+                onKeyDown={async (e) => { if (e.key === 'Enter') { await navigateEditorPicker(editorImagePicker.currentDir) } }}
+                className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs"
+                placeholder="/path/to/images"
+              />
+              <button className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={async () => { await navigateEditorPicker(editorImagePicker.currentDir) }}>Go</button>
+              <div className="ml-auto flex items-center gap-1 text-xs">
+                <span>View:</span>
+                <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setEditorImagePicker((prev) => (prev ? { ...prev, view: 'list' } : prev))}>List</button>
+                <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setEditorImagePicker((prev) => (prev ? { ...prev, view: 'gallery' } : prev))}>Gallery</button>
+              </div>
+            </div>
+            <div className="border border-vscode-border rounded h-[520px] overflow-auto vscode-scrollbar">
+              {editorImagePicker.loading ? (
+                <div className="p-3 text-xs text-vscode-text-muted">Loading…</div>
+              ) : editorImagePicker.error ? (
+                <div className="p-3 text-xs text-red-400">{editorImagePicker.error}</div>
+              ) : (
+                <div>
+                  {((editorImagePicker.view === 'gallery' ? editorImagePicker.entries.filter((e) => e.type === 'file' && /\.(png|jpg|jpeg|gif|bmp|svg|webp)$/i.test(e.name)) : editorImagePicker.entries)).map((ent) => (
+                    editorImagePicker.view === 'gallery' && ent.type === 'file' ? (
+                      <GalleryItem key={ent.path} ent={{ name: ent.name, path: ent.path }} onPickRemote={async (remotePath) => {
+                        setEditorImagePicker((prev) => (prev ? { ...prev, selectionPath: remotePath, altText: '', className: '' } : prev))
+                      }} />
+                    ) : (
+                      <div key={ent.path} className="flex items-center justify-between px-3 py-1 text-xs hover:bg-vscode-hover cursor-pointer" onClick={async () => {
+                        if (ent.type === 'directory') { await navigateEditorPicker(ent.path) } else { setEditorImagePicker((prev) => (prev ? { ...prev, selectionPath: ent.path, altText: '', className: '' } : prev)) }
+                      }}>
+                        <span>{ent.name}</span>
+                        <span className="text-vscode-text-muted">{ent.type === 'directory' ? 'folder' : 'file'}</span>
+                      </div>
+                    )
+                  ))}
+                </div>
+              )}
+            </div>
+            {editorImagePicker.selectionPath && (
+              <div className="mt-3 border-t border-vscode-border pt-3">
+                <div className="mb-2 text-xs">Selected: {editorImagePicker.selectionPath}</div>
+                <div className="mb-2 flex items-center gap-2">
+                  <input type="text" placeholder="alt text" value={editorImagePicker.altText || ''} onChange={(e) => setEditorImagePicker((prev) => (prev ? { ...prev, altText: e.target.value } : prev))} className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs" />
+                  <input type="text" placeholder="css class" value={editorImagePicker.className || ''} onChange={(e) => setEditorImagePicker((prev) => (prev ? { ...prev, className: e.target.value } : prev))} className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs" />
+                </div>
+                <div className="flex justify-end gap-2 text-xs">
+                  <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setEditorImagePicker((prev) => (prev ? { ...prev, selectionPath: undefined } : prev))}>Back</button>
+                  <button className="px-2 py-1 rounded bg-vscode-accent text-white hover:bg-blue-600" onClick={async () => {
+                    const remote = editorImagePicker.selectionPath || ''
+                    if (!remote) return
+                    const src = await normalizeRemoteToSrc(remote)
+                    const altAttr = editorImagePicker.altText && editorImagePicker.altText.trim() ? ` alt="${editorImagePicker.altText.trim()}"` : ''
+                    const classAttr = editorImagePicker.className && editorImagePicker.className.trim() ? ` class="${editorImagePicker.className.trim()}"` : ''
+                    const html = `<img src="${src}"${altAttr}${classAttr}>`
+                    window.dispatchEvent(new CustomEvent('insert-img-into-editor', { detail: { html } }))
+                    setEditorImagePicker(null)
+                  }}>Insert</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
@@ -1343,6 +1882,105 @@ const EditorArea: React.FC = () => {
   const { activeFile, openFiles } = useEditorStore()
   const currentFile = openFiles.find((f) => f.id === activeFile) || null
   const previewFiles = openFiles.filter((f) => f.kind === 'preview')
+  const [editorImagePicker, setEditorImagePicker] = useState<{
+    currentDir: string
+    entries: { name: string; path: string; type: 'file' | 'directory' }[]
+    loading: boolean
+    error: string | null
+    view?: 'list' | 'gallery'
+    selectionPath?: string
+    altText?: string
+    className?: string
+  } | null>(null)
+
+  const ensureLeadingSlash = (p: string) => {
+    let out = String(p || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    if (!out.startsWith('/')) out = '/' + out
+    return out
+  }
+
+  const openEditorPicker = async () => {
+    let startPath = '/'
+    try {
+      const res = await electronAPI.settingsGetImagePickerStartPath?.()
+      if (res && res.success && typeof res.path === 'string' && res.path.trim()) {
+        startPath = res.path
+      }
+    } catch {}
+    setEditorImagePicker({ currentDir: startPath, entries: [], loading: true, error: null, view: 'gallery' })
+    try {
+      const list = await electronAPI.ftpListFilesReadonly?.(startPath) || await electronAPI.ftpListFiles(startPath)
+      if (list.success && Array.isArray(list.files)) {
+        const mapped = list.files.map((item: any) => {
+          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
+          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
+        })
+        setEditorImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
+      } else {
+        setEditorImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
+      }
+    } catch {
+      setEditorImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
+    }
+  }
+
+  const navigateEditorPicker = async (dir: string) => {
+    setEditorImagePicker((prev) => (prev ? { ...prev, currentDir: dir, loading: true, error: null } : prev))
+    try {
+      const list = await electronAPI.ftpListFilesReadonly?.(dir) || await electronAPI.ftpListFiles(dir)
+      if (list.success && Array.isArray(list.files)) {
+        const mapped = list.files.map((item: any) => {
+          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
+          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
+        })
+        setEditorImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
+      } else {
+        setEditorImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
+      }
+    } catch {
+      setEditorImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
+    }
+  }
+
+  const normalizeRemoteToSrc = async (remotePath: string): Promise<string> => {
+    try {
+      const startAfterRes = await electronAPI.settingsGetPreviewStartAfter()
+      const startAfter = (startAfterRes.success && startAfterRes.startAfter ? startAfterRes.startAfter : '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+      const p = String(remotePath || '').replace(/\\/g, '/')
+      const rel = p.replace(/^\/+/, '')
+      if (startAfter) {
+        const lowerRel = rel.toLowerCase()
+        const lowerStart = startAfter.toLowerCase()
+        if (lowerRel.startsWith(lowerStart + '/') || lowerRel === lowerStart) {
+          let trimmed = rel.slice(startAfter.length)
+          trimmed = trimmed.replace(/^\/+/, '')
+          return '/' + trimmed
+        }
+      }
+      return p.startsWith('/') ? p : '/' + p
+    } catch {
+      const p = String(remotePath || '').replace(/\\/g, '/')
+      return p.startsWith('/') ? p : '/' + p
+    }
+  }
+
+  useEffect(() => {
+    const onOpenEditorPicker = () => {
+      openEditorPicker()
+    }
+    window.addEventListener('open-image-picker-editor', onOpenEditorPicker)
+    return () => window.removeEventListener('open-image-picker-editor', onOpenEditorPicker)
+  }, [])
+
+  useEffect(() => {
+    if (currentFile && currentFile.kind === 'preview') {
+      setImagePicker(null)
+      setEditorImagePicker(null)
+      setUploadModal(null)
+      setShowInspect(false)
+      setContextMenu(null)
+    }
+  }, [currentFile?.id, currentFile?.kind])
 
   return (
     <div className="flex-1 flex flex-col bg-vscode-bg">
@@ -1353,7 +1991,7 @@ const EditorArea: React.FC = () => {
             {/* Keep the Monaco editor mounted at all times; just hide it when a preview tab is active */}
             <div
               className={`absolute inset-0 ${
-                currentFile.kind === 'preview' ? 'hidden' : 'block'
+                currentFile.kind === 'preview' && !!(currentFile as any).previewUrl ? 'hidden' : 'block'
               }`}
             >
               <MonacoEditor />

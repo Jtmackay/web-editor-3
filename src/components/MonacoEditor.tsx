@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { useEditorStore } from '../stores/editorStore'
 import { electronAPI } from '../utils/electronAPI'
@@ -7,6 +7,7 @@ const MonacoEditor: React.FC = () => {
   const { openFiles, activeFile, updateFileContent } = useEditorStore()
   const editorRef = useRef<any>(null)
   const changeTimerRef = useRef<number | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   const currentFile = openFiles.find(f => f.id === activeFile)
 
@@ -80,6 +81,18 @@ const MonacoEditor: React.FC = () => {
     editor.onDidFocusEditorText?.(() => {
       try { editor.focus() } catch {}
     })
+
+    try {
+      editor.addAction({
+        id: 'insert-image-picker',
+        label: 'Insert Image',
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 1.5,
+        run: async () => {
+          try { window.dispatchEvent(new CustomEvent('open-image-picker-editor')) } catch {}
+        }
+      })
+    } catch {}
   }
 
   useEffect(() => {
@@ -95,6 +108,19 @@ const MonacoEditor: React.FC = () => {
       }
     })
     return () => { unsubscribe && unsubscribe() }
+  }, [])
+
+  useEffect(() => {
+    const onInsertHtml = (e: Event) => {
+      try {
+        const d = (e as CustomEvent).detail as any
+        const html = d && typeof d.html === 'string' ? d.html : ''
+        if (!html || !editorRef.current) return
+        editorRef.current.trigger('keyboard', 'type', { text: html })
+      } catch {}
+    }
+    window.addEventListener('insert-img-into-editor', onInsertHtml as any)
+    return () => window.removeEventListener('insert-img-into-editor', onInsertHtml as any)
   }, [])
 
   
@@ -122,7 +148,10 @@ const MonacoEditor: React.FC = () => {
   }
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full" onContextMenu={(e) => {
+      e.preventDefault()
+      setContextMenu({ x: e.clientX, y: e.clientY })
+    }}>
       <Editor
         height="100%"
         language={currentFile.language}
@@ -161,6 +190,30 @@ const MonacoEditor: React.FC = () => {
           }
         }}
       />
+      {contextMenu && (
+        <div
+          className="fixed z-[250] bg-vscode-sidebar border border-vscode-border rounded shadow-lg text-sm"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={() => {
+              setContextMenu(null)
+              try { window.dispatchEvent(new CustomEvent('open-image-picker-editor')) } catch {}
+              try { window.postMessage({ type: 'open-image-picker-editor' }, '*') } catch {}
+            }}
+          >
+            Insert Image
+          </button>
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={() => setContextMenu(null)}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   )
 }

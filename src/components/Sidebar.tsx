@@ -169,6 +169,7 @@ const SettingsPanel: React.FC = () => {
   const [dbName, setDbName] = useState('')
   const [dbUser, setDbUser] = useState('')
   const [dbPassword, setDbPassword] = useState('')
+  const [imagePickerStartPath, setImagePickerStartPath] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -176,14 +177,15 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes, inspectorRes] = await Promise.all([
+        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes, inspectorRes, imagePickerRes] = await Promise.all([
           electronAPI.settingsGetSyncFolder(),
           electronAPI.settingsGetPreviewBaseUrl(),
           electronAPI.settingsGetPreviewStartAfter(),
           electronAPI.settingsGetSyncIgnore(),
           electronAPI.settingsGetDbConfig(),
           electronAPI.settingsGetEditorName(),
-          electronAPI.settingsGetEnablePreviewInspector()
+          electronAPI.settingsGetEnablePreviewInspector(),
+          electronAPI.settingsGetImagePickerStartPath?.()
         ])
         if (mounted && syncRes.success && typeof syncRes.path === 'string') {
           setSyncFolder(syncRes.path)
@@ -217,6 +219,9 @@ const SettingsPanel: React.FC = () => {
         }
         if (mounted && inspectorRes.success && typeof inspectorRes.enabled === 'boolean') {
           setEnablePreviewInspector(!!inspectorRes.enabled)
+        }
+        if (mounted && imagePickerRes && imagePickerRes.success && typeof imagePickerRes.path === 'string') {
+          setImagePickerStartPath(imagePickerRes.path)
         }
       } catch (err) {
         console.error('Failed to load sync folder', err)
@@ -266,7 +271,7 @@ const SettingsPanel: React.FC = () => {
     }
     setSaving(true)
     try {
-      const [syncRes, baseUrlRes, startAfterRes, dbRes, editorNameRes] = await Promise.all([
+      const [syncRes, baseUrlRes, startAfterRes, dbRes, editorNameRes, imagePickerRes] = await Promise.all([
         electronAPI.settingsSetSyncFolder(syncFolder.trim()),
         electronAPI.settingsSetPreviewBaseUrl(previewBaseUrl.trim()),
         electronAPI.settingsSetPreviewStartAfter(previewStartAfter.trim()),
@@ -277,7 +282,8 @@ const SettingsPanel: React.FC = () => {
           user: dbUser.trim() || 'postgres',
           password: dbPassword
         }),
-        electronAPI.settingsSetEditorName(editorName.trim())
+        electronAPI.settingsSetEditorName(editorName.trim()),
+        electronAPI.settingsSetImagePickerStartPath?.(imagePickerStartPath.trim() || '/')
       ])
       if (!syncRes.success) {
         setError(syncRes.error || 'Failed to save sync folder')
@@ -289,6 +295,8 @@ const SettingsPanel: React.FC = () => {
         setError(dbRes.error || 'Failed to save database settings')
       } else if (!editorNameRes.success) {
         setError(editorNameRes.error || 'Failed to save editor name')
+      } else if (imagePickerRes && !imagePickerRes.success) {
+        setError(imagePickerRes.error || 'Failed to save image picker start path')
       } else {
         setStatus('Settings saved')
       }
@@ -599,6 +607,19 @@ const SettingsPanel: React.FC = () => {
               <code>www/www</code> here becomes <code>/catalog/transmissions/ax15.html</code>.
             </div>
           </div>
+        </div>
+      </section>
+      <section>
+        <h4 className="font-semibold mb-1">Image Picker</h4>
+        <p className="text-vscode-text-muted mb-2">Choose the default remote folder where the image picker opens.</p>
+        <div className="flex gap-2 mb-2">
+          <input
+            type="text"
+            value={imagePickerStartPath}
+            onChange={(e) => setImagePickerStartPath(e.target.value)}
+            className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+            placeholder="/www/www/images"
+          />
         </div>
       </section>
       <div className="pt-2 border-t border-vscode-border">

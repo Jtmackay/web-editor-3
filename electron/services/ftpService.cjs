@@ -95,6 +95,45 @@ class FTPService {
       return files
     } catch (error) { throw new Error(`Failed to list files: ${error.message}`) }
   }
+  async listFilesReadonly(remotePath = '/') {
+    await this.ensureConnected()
+    let originalPwd = '/'
+    try {
+      try { originalPwd = await this.client.pwd() } catch { originalPwd = '/' }
+      const files = []
+      const sanitized = String(remotePath).replace(/\\/g, '/')
+      const posix = require('path').posix
+      let list
+      let basePath = sanitized
+      try {
+        list = await this.client.list(sanitized === '/' ? '' : sanitized)
+        basePath = sanitized === '/' ? originalPwd : sanitized
+      } catch {
+        // Try listing by temporarily changing directory, but always restore
+        const dirParts = sanitized.replace(/^\/+/, '').split('/').filter(Boolean)
+        let targetBase = originalPwd
+        try {
+          for (const seg of dirParts) { await this.client.cd(seg) }
+          targetBase = await this.client.pwd()
+          list = await this.client.list()
+          basePath = targetBase
+        } catch {
+          list = []
+          basePath = sanitized || originalPwd
+        } finally {
+          try { await this.client.cd(originalPwd) } catch {}
+        }
+      }
+      for (const item of list) {
+        files.push({ name: item.name, path: posix.join(basePath, item.name), type: item.isDirectory ? 'directory' : 'file', size: item.size, modified: item.modifiedAt, permissions: item.permissions })
+      }
+      return files
+    } catch (error) {
+      // Attempt to restore CWD on error
+      try { if (originalPwd) await this.client.cd(originalPwd) } catch {}
+      throw new Error(`Failed to list files (readonly): ${error.message}`)
+    }
+  }
   async downloadFile(remotePath, localPath = null, _retry = false) {
     await this.ensureConnected()
     try {
@@ -142,7 +181,28 @@ class FTPService {
     try {
       let content; let isFile = false
       try { await fs.access(localPath); isFile = (await fs.stat(localPath)).isFile() } catch { content = localPath }
-      if (isFile) { await this.client.uploadFrom(localPath, remotePath) } else { const buffer = Buffer.from(content, 'utf-8'); await this.client.uploadFrom(buffer, remotePath) }
+      const posix = require('path').posix
+      const dir = posix.dirname(String(remotePath).replace(/\\/g, '/'))
+      const base = posix.basename(String(remotePath).replace(/\\/g, '/'))
+      let originalPwd = '/'
+      try { originalPwd = await this.client.pwd() } catch {}
+      try { await this.client.ensureDir(dir) } catch {}
+      try { if (dir && dir !== '/') { await this.client.cd(dir) } } catch {}
+      if (isFile) {
+        await this.client.uploadFrom(localPath, base)
+      } else {
+        let buffer
+        const raw = String(content || '')
+        if (raw.startsWith('data:') && raw.includes(';base64,')) {
+          const idx = raw.indexOf(';base64,')
+          const base64 = raw.slice(idx + ';base64,'.length)
+          buffer = Buffer.from(base64, 'base64')
+        } else {
+          buffer = Buffer.from(raw, 'utf-8')
+        }
+        await this.client.uploadFrom(buffer, base)
+      }
+      try { await this.client.cd(originalPwd) } catch {}
       return true
     } catch (error) {
       // If the client was closed due to overlapping tasks, reconnect once and retry

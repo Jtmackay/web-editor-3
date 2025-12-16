@@ -6,9 +6,11 @@ declare global {
       ftpConnect: (config: any) => Promise<{ success: boolean; error?: string }>
       ftpDisconnect: () => Promise<{ success: boolean; error?: string }>
       ftpListFiles: (path: string) => Promise<{ success: boolean; files?: any[]; error?: string }>
+      ftpListFilesReadonly?: (path: string) => Promise<{ success: boolean; files?: any[]; error?: string }>
       ftpListAll: (path: string) => Promise<{ success: boolean; tree?: any[]; error?: string }>
       ftpDownloadFile: (remotePath: string, localPath: string) => Promise<{ success: boolean; content?: string; error?: string }>
       ftpUploadFile: (localPath: string, remotePath: string) => Promise<{ success: boolean; error?: string }>
+      ftpCreateDirectory?: (remotePath: string) => Promise<{ success: boolean; error?: string }>
       ftpSyncToLocal: (remoteRoot: string, localRoot: string, ignorePatterns: string[]) => Promise<{ success: boolean; error?: string }>
 
       // File cache operations
@@ -46,6 +48,8 @@ declare global {
       settingsSetEditorName: (name: string) => Promise<{ success: boolean; name?: string; error?: string }>
       settingsGetEnablePreviewInspector: () => Promise<{ success: boolean; enabled?: boolean; error?: string }>
       settingsSetEnablePreviewInspector: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>
+      settingsGetImagePickerStartPath?: () => Promise<{ success: boolean; path?: string; error?: string }>
+      settingsSetImagePickerStartPath?: (path: string) => Promise<{ success: boolean; path?: string; error?: string }>
 
       settingsGetDbConfig: () => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
       settingsSetDbConfig: (config: { host: string; port: number; database: string; user: string; password: string }) => Promise<{ success: boolean; config?: { host: string; port: number; database: string; user: string; password: string }; error?: string }>
@@ -84,9 +88,11 @@ export const electronAPI = {
   ftpConnect: (config: any) => (window.electronAPI && typeof window.electronAPI.ftpConnect === 'function') ? window.electronAPI.ftpConnect(config) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpDisconnect: () => (window.electronAPI && typeof window.electronAPI.ftpDisconnect === 'function') ? window.electronAPI.ftpDisconnect() : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpListFiles: (path: string) => (window.electronAPI && typeof window.electronAPI.ftpListFiles === 'function') ? window.electronAPI.ftpListFiles(path) : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  ftpListFilesReadonly: (path: string) => (window.electronAPI && typeof window.electronAPI.ftpListFilesReadonly === 'function') ? window.electronAPI.ftpListFilesReadonly(path) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpListAll: (path: string) => (window.electronAPI && typeof window.electronAPI.ftpListAll === 'function') ? window.electronAPI.ftpListAll(path) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpDownloadFile: (remotePath: string, localPath: string) => (window.electronAPI && typeof window.electronAPI.ftpDownloadFile === 'function') ? window.electronAPI.ftpDownloadFile(remotePath, localPath) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpUploadFile: (localPath: string, remotePath: string) => (window.electronAPI && typeof window.electronAPI.ftpUploadFile === 'function') ? window.electronAPI.ftpUploadFile(localPath, remotePath) : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  ftpCreateDirectory: (remotePath: string) => (window.electronAPI && typeof window.electronAPI.ftpCreateDirectory === 'function') ? window.electronAPI.ftpCreateDirectory(remotePath) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   ftpSyncToLocal: (remoteRoot: string, localRoot: string, ignorePatterns: string[]) =>
     (window.electronAPI && typeof window.electronAPI.ftpSyncToLocal === 'function')
       ? window.electronAPI.ftpSyncToLocal(remoteRoot, localRoot, ignorePatterns)
@@ -186,6 +192,14 @@ export const electronAPI = {
           error: 'Electron API not available'
         }),
   openExternalUrl: (url: string) => window.electronAPI?.openExternalUrl(url) || Promise.resolve({ success: false, error: 'Electron API not available' }),
+  settingsGetImagePickerStartPath: (): Promise<{ success: boolean; path?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsGetImagePickerStartPath === 'function')
+      ? window.electronAPI.settingsGetImagePickerStartPath()
+      : Promise.resolve<{ success: boolean; path?: string; error?: string }>({ success: true, path: '/' }),
+  settingsSetImagePickerStartPath: (path: string): Promise<{ success: boolean; path?: string; error?: string }> =>
+    (window.electronAPI && typeof window.electronAPI.settingsSetImagePickerStartPath === 'function')
+      ? window.electronAPI.settingsSetImagePickerStartPath(path)
+      : Promise.resolve<{ success: boolean; path?: string; error?: string }>({ success: false, error: 'Electron API not available' }),
   settingsGetDbConfig: () =>
     window.electronAPI?.settingsGetDbConfig() ||
     Promise.resolve({
