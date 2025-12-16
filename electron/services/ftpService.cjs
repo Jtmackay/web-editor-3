@@ -118,8 +118,14 @@ class FTPService {
           list = await this.client.list()
           basePath = targetBase
         } catch {
-          list = []
-          basePath = sanitized || originalPwd
+          // As a robust fallback, list current working directory instead of returning empty
+          try {
+            list = await this.client.list()
+            basePath = originalPwd
+          } catch {
+            list = []
+            basePath = sanitized || originalPwd
+          }
         } finally {
           try { await this.client.cd(originalPwd) } catch {}
         }
@@ -183,13 +189,9 @@ class FTPService {
       try { await fs.access(localPath); isFile = (await fs.stat(localPath)).isFile() } catch { content = localPath }
       const posix = require('path').posix
       const dir = posix.dirname(String(remotePath).replace(/\\/g, '/'))
-      const base = posix.basename(String(remotePath).replace(/\\/g, '/'))
-      let originalPwd = '/'
-      try { originalPwd = await this.client.pwd() } catch {}
       try { await this.client.ensureDir(dir) } catch {}
-      try { if (dir && dir !== '/') { await this.client.cd(dir) } } catch {}
       if (isFile) {
-        await this.client.uploadFrom(localPath, base)
+        await this.client.uploadFrom(localPath, remotePath)
       } else {
         let buffer
         const raw = String(content || '')
@@ -197,12 +199,18 @@ class FTPService {
           const idx = raw.indexOf(';base64,')
           const base64 = raw.slice(idx + ';base64,'.length)
           buffer = Buffer.from(base64, 'base64')
+        } else if (raw.startsWith('data:')) {
+          const commaIdx = raw.indexOf(',')
+          const data = raw.slice(commaIdx + 1)
+          buffer = Buffer.from(decodeURIComponent(data), 'utf-8')
         } else {
           buffer = Buffer.from(raw, 'utf-8')
         }
-        await this.client.uploadFrom(buffer, base)
+        const os = require('os')
+        const tmpPath = path.join(os.tmpdir(), `web-editor-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+        await fs.writeFile(tmpPath, buffer)
+        try { await this.client.uploadFrom(tmpPath, remotePath) } finally { try { await fs.unlink(tmpPath) } catch {} }
       }
-      try { await this.client.cd(originalPwd) } catch {}
       return true
     } catch (error) {
       // If the client was closed due to overlapping tasks, reconnect once and retry

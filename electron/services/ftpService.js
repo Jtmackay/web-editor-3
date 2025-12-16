@@ -1,6 +1,8 @@
 const ftp = require('basic-ftp')
 const fs = require('fs').promises
 const path = require('path')
+const { Readable } = require('stream')
+const os = require('os')
 
 class FTPService {
   constructor() {
@@ -240,6 +242,8 @@ class FTPService {
       throw new Error('Not connected to FTP server')
     }
 
+    await this.ensureConnected()
+
     try {
       console.log(`Uploading file: ${localPath} -> ${remotePath}`)
       
@@ -258,9 +262,33 @@ class FTPService {
       if (isFile) {
         await this.client.uploadFrom(localPath, remotePath)
       } else {
-        // Upload from buffer
-        const buffer = Buffer.from(content, 'utf-8')
-        await this.client.uploadFrom(buffer, remotePath)
+        // Upload from content string or Data URL
+        const str = String(content || '')
+        if (str.startsWith('data:')) {
+          const commaIndex = str.indexOf(',')
+          const header = commaIndex >= 0 ? str.slice(0, commaIndex) : ''
+          const dataPart = commaIndex >= 0 ? str.slice(commaIndex + 1) : ''
+          const isBase64 = /;base64/i.test(header)
+          const buffer = isBase64 ? Buffer.from(dataPart, 'base64') : Buffer.from(decodeURIComponent(dataPart), 'utf-8')
+          const tmpName = `web-editor-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          const tmpPath = path.join(os.tmpdir(), tmpName)
+          await fs.writeFile(tmpPath, buffer)
+          try {
+            await this.client.uploadFrom(tmpPath, remotePath)
+          } finally {
+            try { await fs.unlink(tmpPath) } catch {}
+          }
+        } else {
+          const buffer = Buffer.from(str, 'utf-8')
+          const tmpName = `web-editor-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          const tmpPath = path.join(os.tmpdir(), tmpName)
+          await fs.writeFile(tmpPath, buffer)
+          try {
+            await this.client.uploadFrom(tmpPath, remotePath)
+          } finally {
+            try { await fs.unlink(tmpPath) } catch {}
+          }
+        }
       }
       
       console.log('File uploaded successfully')

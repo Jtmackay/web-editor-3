@@ -108,13 +108,8 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
       } catch {}
     }
     window.addEventListener('open-image-picker', onOpenPicker as any)
-    const onMessage = (ev: MessageEvent) => {
-      try { if (ev.data && ev.data.type === 'open-image-picker-editor') { openEditorPicker() } } catch {}
-    }
-    window.addEventListener('message', onMessage)
     return () => {
       window.removeEventListener('open-image-picker', onOpenPicker as any)
-      window.removeEventListener('message', onMessage)
     }
   }, [])
 
@@ -508,9 +503,13 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
         startPath = res.path
       }
     } catch {}
-    setImagePicker({ mode: 'dom', targetPath, currentDir: startPath, entries: [], loading: true, error: null })
+    const normStart = String(startPath || '/').replace(/\\/g, '/').replace(/\/+$/, '') || '/'
+    setImagePicker({ mode: 'dom', targetPath, currentDir: normStart, entries: [], loading: true, error: null })
     try {
-      const list = await electronAPI.ftpListFilesReadonly?.(startPath) || await electronAPI.ftpListFiles(startPath)
+      let list = await electronAPI.ftpListFilesReadonly?.(normStart)
+      if (!list || !list.success || !Array.isArray(list.files) || list.files.length === 0) {
+        list = await electronAPI.ftpListFiles(normStart)
+      }
       if (list.success && Array.isArray(list.files)) {
         const mapped = list.files.map((item: any) => {
           const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
@@ -533,9 +532,13 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
         startPath = res.path
       }
     } catch {}
-    setImagePicker({ mode: 'editor', currentDir: startPath, entries: [], loading: true, error: null })
+    const normStart = String(startPath || '/').replace(/\\/g, '/').replace(/\/+$/, '') || '/'
+    setImagePicker({ mode: 'editor', currentDir: normStart, entries: [], loading: true, error: null })
     try {
-      const list = await electronAPI.ftpListFilesReadonly?.(startPath) || await electronAPI.ftpListFiles(startPath)
+      let list = await electronAPI.ftpListFilesReadonly?.(normStart)
+      if (!list || !list.success || !Array.isArray(list.files) || list.files.length === 0) {
+        list = await electronAPI.ftpListFiles(normStart)
+      }
       if (list.success && Array.isArray(list.files)) {
         const mapped = list.files.map((item: any) => {
           const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
@@ -573,7 +576,11 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
     if (!iframe) return
     try {
       const iframeDoc = iframe.contentWindow?.document
-      const el = iframeDoc?.querySelector(targetPath) as HTMLElement | null
+      const selector = (targetPath && targetPath.trim()) ? targetPath : 'body'
+      let el = iframeDoc?.querySelector(selector) as HTMLElement | null
+      if (!el && selector === 'body') {
+        el = iframeDoc?.body || null
+      }
       if (!el) return
       const beforeHtml = el.innerHTML || ''
       const img = iframeDoc!.createElement('img')
@@ -597,11 +604,24 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           finalSrc = p.startsWith('/') ? p : '/' + p
         }
       } catch {}
-      img.setAttribute('src', finalSrc)
-      if (altText) img.setAttribute('alt', altText)
-      if (className) img.setAttribute('class', className)
-      el.appendChild(img)
-      const afterHtml = el.innerHTML || ''
+      const tag = (el.tagName || '').toLowerCase()
+      const voidTags = new Set(['area','base','br','col','embed','hr','img','input','link','meta','source','track','wbr'])
+      if (tag === 'img') {
+        el.setAttribute('src', finalSrc)
+        if (altText) el.setAttribute('alt', altText)
+        if (className) el.setAttribute('class', className)
+      } else if (voidTags.has(tag)) {
+        img.setAttribute('src', finalSrc)
+        if (altText) img.setAttribute('alt', altText)
+        if (className) img.setAttribute('class', className)
+        el.insertAdjacentElement('afterend', img)
+      } else {
+        img.setAttribute('src', finalSrc)
+        if (altText) img.setAttribute('alt', altText)
+        if (className) img.setAttribute('class', className)
+        el.appendChild(img)
+      }
+      const afterHtml = (voidTags.has(tag) ? (el.parentElement?.innerHTML || '') : (el.innerHTML || ''))
       setLatestTextChange({
         token: ++textChangeTokenRef.current,
         path: targetPath,
@@ -1607,6 +1627,21 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
                 <button
                   className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
                   onClick={async () => {
+                    const cur = imagePicker.currentDir || '/'
+                    const norm = cur.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
+                    let parent = '/'
+                    if (norm !== '/') {
+                      const parts = norm.replace(/^\/+/, '').split('/').filter(Boolean)
+                      parts.pop()
+                      parent = '/' + parts.join('/')
+                      if (parent === '') parent = '/'
+                    }
+                    await navigateImagePicker(parent)
+                  }}
+                >Back</button>
+                <button
+                  className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                  onClick={async () => {
                     await navigateImagePicker(imagePicker.currentDir)
                   }}
                 >Go</button>
@@ -1737,25 +1772,28 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
                     setUploadModal((prev) => (prev ? { ...prev, uploading: true, error: null } : prev))
                     const { originalDataUrl, smallDataUrl, baseName, finalExt } = await processUploadFile(f, uploadModal.convertWebp, uploadModal.smallWidth)
                     const baseDir = imagePicker?.currentDir || '/'
-                    let normalizedDir = baseDir.replace(/\\/g, '/').replace(/\/+$/, '')
-                    if (!normalizedDir.startsWith('/')) normalizedDir = '/' + normalizedDir
+                    const normalizedDir = baseDir.replace(/\\/g, '/').replace(/\/+$/, '')
                     const originalRemote = `${normalizedDir}/${baseName}.${finalExt}`
                     const smallRemote = `${normalizedDir}/${baseName}_small.${finalExt}`
-                    await electronAPI.ftpCreateDirectory?.(normalizedDir)
+                    const dirToCreate = normalizedDir || '/'
+                    await electronAPI.ftpCreateDirectory?.(dirToCreate)
                     const oRes = await electronAPI.ftpUploadFile(originalDataUrl, originalRemote)
                     let sRes = { success: true }
                     if (uploadModal.makeSmall) {
                       sRes = await electronAPI.ftpUploadFile(smallDataUrl, smallRemote)
                     }
                     if (!oRes.success || !sRes.success) {
-                      setUploadModal((prev) => (prev ? { ...prev, uploading: false, error: 'Upload failed' } : prev))
+                      const errMsg = (oRes && (oRes as any).error) || (sRes && (sRes as any).error) || 'Upload failed'
+                      setUploadModal((prev) => (prev ? { ...prev, uploading: false, error: errMsg } : prev))
                     } else {
                       setUploadModal(null)
                       await navigateImagePicker(baseDir)
                       setImagePicker((prev) => (prev ? { ...prev, selectionPath: uploadModal.makeSmall ? smallRemote : originalRemote } : prev))
                     }
                   } catch (err) {
-                    setUploadModal((prev) => (prev ? { ...prev, uploading: false, error: 'Upload failed' } : prev))
+                    console.error('Upload failed:', err)
+                    const msg = (err && (err as any).message) ? String((err as any).message) : 'Upload failed'
+                    setUploadModal((prev) => (prev ? { ...prev, uploading: false, error: msg } : prev))
                   }
                 }}>Upload</button>
               </div>
@@ -1802,78 +1840,6 @@ const BrowserPreview: React.FC<BrowserPreviewProps> = ({ url, sourcePath, isActi
           }}
         />
       )}
-      {editorImagePicker && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40">
-          <div className="bg-vscode-bg border border-vscode-border rounded shadow-lg w-[1200px] max-w-[95vw] max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold">Insert Image</h2>
-              <button className="text-xs px-2 py-1 rounded hover:bg-vscode-hover" onClick={() => setEditorImagePicker(null)}>Close</button>
-            </div>
-            <div className="mb-2 flex items-center gap-2">
-              <input
-                type="text"
-                value={editorImagePicker.currentDir}
-                onChange={(e) => setEditorImagePicker((prev) => (prev ? { ...prev, currentDir: e.target.value } : prev))}
-                onKeyDown={async (e) => { if (e.key === 'Enter') { await navigateEditorPicker(editorImagePicker.currentDir) } }}
-                className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs"
-                placeholder="/path/to/images"
-              />
-              <button className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={async () => { await navigateEditorPicker(editorImagePicker.currentDir) }}>Go</button>
-              <div className="ml-auto flex items-center gap-1 text-xs">
-                <span>View:</span>
-                <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setEditorImagePicker((prev) => (prev ? { ...prev, view: 'list' } : prev))}>List</button>
-                <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setEditorImagePicker((prev) => (prev ? { ...prev, view: 'gallery' } : prev))}>Gallery</button>
-              </div>
-            </div>
-            <div className="border border-vscode-border rounded h-[520px] overflow-auto vscode-scrollbar">
-              {editorImagePicker.loading ? (
-                <div className="p-3 text-xs text-vscode-text-muted">Loading…</div>
-              ) : editorImagePicker.error ? (
-                <div className="p-3 text-xs text-red-400">{editorImagePicker.error}</div>
-              ) : (
-                <div>
-                  {((editorImagePicker.view === 'gallery' ? editorImagePicker.entries.filter((e) => e.type === 'file' && /\.(png|jpg|jpeg|gif|bmp|svg|webp)$/i.test(e.name)) : editorImagePicker.entries)).map((ent) => (
-                    editorImagePicker.view === 'gallery' && ent.type === 'file' ? (
-                      <GalleryItem key={ent.path} ent={{ name: ent.name, path: ent.path }} onPickRemote={async (remotePath) => {
-                        setEditorImagePicker((prev) => (prev ? { ...prev, selectionPath: remotePath, altText: '', className: '' } : prev))
-                      }} />
-                    ) : (
-                      <div key={ent.path} className="flex items-center justify-between px-3 py-1 text-xs hover:bg-vscode-hover cursor-pointer" onClick={async () => {
-                        if (ent.type === 'directory') { await navigateEditorPicker(ent.path) } else { setEditorImagePicker((prev) => (prev ? { ...prev, selectionPath: ent.path, altText: '', className: '' } : prev)) }
-                      }}>
-                        <span>{ent.name}</span>
-                        <span className="text-vscode-text-muted">{ent.type === 'directory' ? 'folder' : 'file'}</span>
-                      </div>
-                    )
-                  ))}
-                </div>
-              )}
-            </div>
-            {editorImagePicker.selectionPath && (
-              <div className="mt-3 border-t border-vscode-border pt-3">
-                <div className="mb-2 text-xs">Selected: {editorImagePicker.selectionPath}</div>
-                <div className="mb-2 flex items-center gap-2">
-                  <input type="text" placeholder="alt text" value={editorImagePicker.altText || ''} onChange={(e) => setEditorImagePicker((prev) => (prev ? { ...prev, altText: e.target.value } : prev))} className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs" />
-                  <input type="text" placeholder="css class" value={editorImagePicker.className || ''} onChange={(e) => setEditorImagePicker((prev) => (prev ? { ...prev, className: e.target.value } : prev))} className="flex-1 px-2 py-1 bg-vscode-sidebar border border-vscode-border rounded text-xs" />
-                </div>
-                <div className="flex justify-end gap-2 text-xs">
-                  <button className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setEditorImagePicker((prev) => (prev ? { ...prev, selectionPath: undefined } : prev))}>Back</button>
-                  <button className="px-2 py-1 rounded bg-vscode-accent text-white hover:bg-blue-600" onClick={async () => {
-                    const remote = editorImagePicker.selectionPath || ''
-                    if (!remote) return
-                    const src = await normalizeRemoteToSrc(remote)
-                    const altAttr = editorImagePicker.altText && editorImagePicker.altText.trim() ? ` alt="${editorImagePicker.altText.trim()}"` : ''
-                    const classAttr = editorImagePicker.className && editorImagePicker.className.trim() ? ` class="${editorImagePicker.className.trim()}"` : ''
-                    const html = `<img src="${src}"${altAttr}${classAttr}>`
-                    window.dispatchEvent(new CustomEvent('insert-img-into-editor', { detail: { html } }))
-                    setEditorImagePicker(null)
-                  }}>Insert</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -1882,105 +1848,6 @@ const EditorArea: React.FC = () => {
   const { activeFile, openFiles } = useEditorStore()
   const currentFile = openFiles.find((f) => f.id === activeFile) || null
   const previewFiles = openFiles.filter((f) => f.kind === 'preview')
-  const [editorImagePicker, setEditorImagePicker] = useState<{
-    currentDir: string
-    entries: { name: string; path: string; type: 'file' | 'directory' }[]
-    loading: boolean
-    error: string | null
-    view?: 'list' | 'gallery'
-    selectionPath?: string
-    altText?: string
-    className?: string
-  } | null>(null)
-
-  const ensureLeadingSlash = (p: string) => {
-    let out = String(p || '').replace(/\\/g, '/').replace(/\/+$/, '')
-    if (!out.startsWith('/')) out = '/' + out
-    return out
-  }
-
-  const openEditorPicker = async () => {
-    let startPath = '/'
-    try {
-      const res = await electronAPI.settingsGetImagePickerStartPath?.()
-      if (res && res.success && typeof res.path === 'string' && res.path.trim()) {
-        startPath = res.path
-      }
-    } catch {}
-    setEditorImagePicker({ currentDir: startPath, entries: [], loading: true, error: null, view: 'gallery' })
-    try {
-      const list = await electronAPI.ftpListFilesReadonly?.(startPath) || await electronAPI.ftpListFiles(startPath)
-      if (list.success && Array.isArray(list.files)) {
-        const mapped = list.files.map((item: any) => {
-          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
-          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
-        })
-        setEditorImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
-      } else {
-        setEditorImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
-      }
-    } catch {
-      setEditorImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
-    }
-  }
-
-  const navigateEditorPicker = async (dir: string) => {
-    setEditorImagePicker((prev) => (prev ? { ...prev, currentDir: dir, loading: true, error: null } : prev))
-    try {
-      const list = await electronAPI.ftpListFilesReadonly?.(dir) || await electronAPI.ftpListFiles(dir)
-      if (list.success && Array.isArray(list.files)) {
-        const mapped = list.files.map((item: any) => {
-          const isDir = item && (item.type === 'directory' || item.type === 2 || item.isDirectory === true)
-          return { name: item.name, path: item.path, type: isDir ? 'directory' : 'file' as const }
-        })
-        setEditorImagePicker((prev) => (prev ? { ...prev, entries: mapped, loading: false } : prev))
-      } else {
-        setEditorImagePicker((prev) => (prev ? { ...prev, error: list.error || 'Failed to list files', loading: false } : prev))
-      }
-    } catch {
-      setEditorImagePicker((prev) => (prev ? { ...prev, error: 'Failed to load files', loading: false } : prev))
-    }
-  }
-
-  const normalizeRemoteToSrc = async (remotePath: string): Promise<string> => {
-    try {
-      const startAfterRes = await electronAPI.settingsGetPreviewStartAfter()
-      const startAfter = (startAfterRes.success && startAfterRes.startAfter ? startAfterRes.startAfter : '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
-      const p = String(remotePath || '').replace(/\\/g, '/')
-      const rel = p.replace(/^\/+/, '')
-      if (startAfter) {
-        const lowerRel = rel.toLowerCase()
-        const lowerStart = startAfter.toLowerCase()
-        if (lowerRel.startsWith(lowerStart + '/') || lowerRel === lowerStart) {
-          let trimmed = rel.slice(startAfter.length)
-          trimmed = trimmed.replace(/^\/+/, '')
-          return '/' + trimmed
-        }
-      }
-      return p.startsWith('/') ? p : '/' + p
-    } catch {
-      const p = String(remotePath || '').replace(/\\/g, '/')
-      return p.startsWith('/') ? p : '/' + p
-    }
-  }
-
-  useEffect(() => {
-    const onOpenEditorPicker = () => {
-      openEditorPicker()
-    }
-    window.addEventListener('open-image-picker-editor', onOpenEditorPicker)
-    return () => window.removeEventListener('open-image-picker-editor', onOpenEditorPicker)
-  }, [])
-
-  useEffect(() => {
-    if (currentFile && currentFile.kind === 'preview') {
-      setImagePicker(null)
-      setEditorImagePicker(null)
-      setUploadModal(null)
-      setShowInspect(false)
-      setContextMenu(null)
-    }
-  }, [currentFile?.id, currentFile?.kind])
 
   return (
     <div className="flex-1 flex flex-col bg-vscode-bg">
@@ -1991,7 +1858,7 @@ const EditorArea: React.FC = () => {
             {/* Keep the Monaco editor mounted at all times; just hide it when a preview tab is active */}
             <div
               className={`absolute inset-0 ${
-                currentFile.kind === 'preview' && !!(currentFile as any).previewUrl ? 'hidden' : 'block'
+                currentFile.kind === 'preview' ? 'hidden' : 'block'
               }`}
             >
               <MonacoEditor />

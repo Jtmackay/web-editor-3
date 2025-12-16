@@ -161,6 +161,7 @@ const MonacoEditor: React.FC = () => {
         onMount={handleEditorDidMount}
         theme="vs-dark"
         options={{
+          contextmenu: false,
           selectOnLineNumbers: true,
           matchBrackets: 'always',
           autoClosingBrackets: 'always',
@@ -201,7 +202,6 @@ const MonacoEditor: React.FC = () => {
             onClick={() => {
               setContextMenu(null)
               try { window.dispatchEvent(new CustomEvent('open-image-picker-editor')) } catch {}
-              try { window.postMessage({ type: 'open-image-picker-editor' }, '*') } catch {}
             }}
           >
             Insert Image
