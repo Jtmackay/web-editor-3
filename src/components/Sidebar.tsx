@@ -182,6 +182,8 @@ const SettingsPanel: React.FC = () => {
   const [newIgnorePattern, setNewIgnorePattern] = useState('')
   const [editorName, setEditorName] = useState('')
   const [enablePreviewInspector, setEnablePreviewInspector] = useState(false)
+  const [driftEnabled, setDriftEnabled] = useState(true)
+  const [driftInterval, setDriftInterval] = useState<number | string>(60)
   const [dbHost, setDbHost] = useState('')
   const [dbPort, setDbPort] = useState<number | string>('')
   const [dbName, setDbName] = useState('')
@@ -195,7 +197,7 @@ const SettingsPanel: React.FC = () => {
       setLoading(true)
       setError(null)
       try {
-        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes, inspectorRes, imagePickerRes] = await Promise.all([
+        const [syncRes, baseUrlRes, startAfterRes, ignoreRes, dbRes, editorNameRes, inspectorRes, imagePickerRes, driftRes] = await Promise.all([
           electronAPI.settingsGetSyncFolder(),
           electronAPI.settingsGetPreviewBaseUrl(),
           electronAPI.settingsGetPreviewStartAfter(),
@@ -203,7 +205,8 @@ const SettingsPanel: React.FC = () => {
           electronAPI.settingsGetDbConfig(),
           electronAPI.settingsGetEditorName(),
           electronAPI.settingsGetEnablePreviewInspector(),
-          electronAPI.settingsGetImagePickerStartPath?.()
+          electronAPI.settingsGetImagePickerStartPath?.(),
+          electronAPI.settingsGetDriftWatch?.()
         ])
         if (mounted && syncRes.success && typeof syncRes.path === 'string') {
           setSyncFolder(syncRes.path)
@@ -237,6 +240,10 @@ const SettingsPanel: React.FC = () => {
         }
         if (mounted && inspectorRes.success && typeof inspectorRes.enabled === 'boolean') {
           setEnablePreviewInspector(!!inspectorRes.enabled)
+        }
+        if (mounted && driftRes && driftRes.success) {
+          if (typeof driftRes.enabled === 'boolean') setDriftEnabled(!!driftRes.enabled)
+          if (typeof driftRes.intervalMinutes === 'number') setDriftInterval(driftRes.intervalMinutes)
         }
         if (mounted && imagePickerRes && imagePickerRes.success && typeof imagePickerRes.path === 'string') {
           setImagePickerStartPath(imagePickerRes.path)
@@ -347,6 +354,58 @@ const SettingsPanel: React.FC = () => {
           This only affects how you appear to others. Database credentials are configured separately
           below.
         </p>
+      </section>
+      <section>
+        <h4 className="font-semibold mb-1">Automatic Drift Watcher</h4>
+        <p className="text-vscode-text-muted mb-2">
+          When enabled, the app periodically checks recently edited files for external changes. Disable if you notice high CPU usage.
+        </p>
+        <label className="inline-flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={driftEnabled}
+            onChange={async (e) => {
+              const next = e.target.checked
+              setDriftEnabled(next)
+              try {
+                const res = await electronAPI.settingsSetDriftWatch?.({ enabled: next, intervalMinutes: Number(driftInterval) || 60 })
+                if (!res || !res.success) {
+                  setError((res && (res as any).error) || 'Failed to update drift watcher setting')
+                } else {
+                  setStatus(next ? 'Automatic watcher enabled' : 'Automatic watcher disabled')
+                }
+              } catch (err) {
+                console.error('Failed to update drift watcher setting', err)
+                setError('Failed to update drift watcher setting')
+              }
+            }}
+          />
+          <span>Enable automatic drift watcher</span>
+        </label>
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-xs">Interval (minutes)</label>
+          <input
+            type="number"
+            min={5}
+            value={driftInterval}
+            onChange={(e) => setDriftInterval(e.target.value)}
+            onBlur={async () => {
+              try {
+                const mins = Number(driftInterval) || 60
+                const res = await electronAPI.settingsSetDriftWatch?.({ intervalMinutes: mins, enabled: driftEnabled })
+                if (!res || !res.success) {
+                  setError((res && (res as any).error) || 'Failed to update watcher interval')
+                } else {
+                  setStatus(`Interval set to ${mins} minutes`)
+                }
+              } catch (err) {
+                console.error('Failed to update watcher interval', err)
+                setError('Failed to update watcher interval')
+              }
+            }}
+            className="w-20 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+          />
+        </div>
       </section>
       <section>
         <h4 className="font-semibold mb-1">FTP Sync</h4>

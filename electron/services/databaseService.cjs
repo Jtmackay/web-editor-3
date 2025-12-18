@@ -157,11 +157,68 @@ class DatabaseService {
 
   async getEditedFiles(limit = 100) {
     if (this.dbAvailable && this.pool) {
-      const q = `SELECT file_path, MAX(created_at) AS last_edit, COUNT(*) AS version_count FROM file_versions GROUP BY file_path ORDER BY last_edit DESC LIMIT $1`
+      const q = `
+        SELECT file_path, MAX(created_at) AS last_edit, COUNT(*) AS version_count
+        FROM file_versions
+        WHERE file_path !~ '^[0-9A-Fa-f]{12,64}$'
+          AND file_path ~ '\\.[^/]+$'
+        GROUP BY file_path
+        ORDER BY last_edit DESC
+        LIMIT $1`
       const r = await this.pool.query(q, [limit])
       return r.rows.map(row => ({ file_path: row.file_path, last_edit: row.last_edit, version_count: Number(row.version_count || 0) }))
     }
-    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    let all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    all = all.filter((v) => {
+      const p = String(v.file_path || '')
+      const base = p.replace(/\\/g, '/').split('/').pop() || ''
+      const hasExt = /\.[^./]+$/.test(base)
+      const isHex = /^[0-9A-Fa-f]{12,64}$/.test(base)
+      return hasExt && !isHex
+    })
+    const map = new Map()
+    for (const v of all) {
+      const p = String(v.file_path)
+      const ts = new Date(v.created_at).getTime() || 0
+      const prev = map.get(p)
+      if (!prev || ts > prev.ts) {
+        map.set(p, { ts, count: (prev ? prev.count : 0) + 1 })
+      } else {
+        map.set(p, { ts: prev.ts, count: prev.count + 1 })
+      }
+    }
+    const arr = Array.from(map.entries()).map(([file_path, d]) => ({ file_path, last_edit: new Date(d.ts).toISOString(), version_count: d.count }))
+    arr.sort((a, b) => new Date(b.last_edit).getTime() - new Date(a.last_edit).getTime())
+    return arr.slice(0, limit)
+  }
+
+  async getEditedFilesSince(sinceMs = 0, limit = 100) {
+    if (this.dbAvailable && this.pool) {
+      const q = `
+        SELECT file_path, MAX(created_at) AS last_edit, COUNT(*) AS version_count
+        FROM file_versions
+        WHERE action <> 'baseline'
+          AND created_at > TO_TIMESTAMP($1 / 1000.0)
+          AND file_path !~ '^[0-9A-Fa-f]{12,64}$'
+          AND file_path ~ '\\.[^/]+$'
+        GROUP BY file_path
+        ORDER BY last_edit DESC
+        LIMIT $2`
+      const r = await this.pool.query(q, [Number(sinceMs) || 0, limit])
+      return r.rows.map(row => ({ file_path: row.file_path, last_edit: row.last_edit, version_count: Number(row.version_count || 0) }))
+    }
+    let all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const cutoff = Number(sinceMs) || 0
+    all = all.filter((v) => {
+      const t = new Date(v.created_at).getTime() || 0
+      if (v.action === 'baseline') return false
+      if (cutoff > 0 && t <= cutoff) return false
+      const p = String(v.file_path || '')
+      const base = p.replace(/\\/g, '/').split('/').pop() || ''
+      const hasExt = /\.[^./]+$/.test(base)
+      const isHex = /^[0-9A-Fa-f]{12,64}$/.test(base)
+      return hasExt && !isHex
+    })
     const map = new Map()
     for (const v of all) {
       const p = String(v.file_path)

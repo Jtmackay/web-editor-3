@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbRemoveFTPConnection: (payload) => ipcRenderer.invoke('db-remove-ftp-connection', payload),
   dbGetFTPPassword: (connectionId) => ipcRenderer.invoke('db-get-ftp-password', connectionId),
   dbGetEditedFiles: (limit) => ipcRenderer.invoke('db-get-edited-files', limit),
+  dbGetEditedFilesSince: (sinceMs, limit) => ipcRenderer.invoke('db-get-edited-files-since', sinceMs, limit),
   settingsGetFTPConnections: () => ipcRenderer.invoke('settings-get-ftp-connections'),
   settingsAddFTPConnection: (conn) => ipcRenderer.invoke('settings-add-ftp-connection', conn),
   settingsRemoveFTPConnection: (id) => ipcRenderer.invoke('settings-remove-ftp-connection', id),
@@ -139,5 +140,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.removeListener('drift-detected', handler)
     }
-  }
+  },
+  onDriftScanProgress: (callback) => {
+    const handler = (event, payload) => callback(event, payload)
+    ipcRenderer.on('drift-scan-progress', handler)
+    return () => {
+      ipcRenderer.removeListener('drift-scan-progress', handler)
+    }
+  },
+  driftScanNow: () => ipcRenderer.invoke('drift-scan-now')
+  ,
+  driftScanFull: () => ipcRenderer.invoke('drift-scan-full')
 })

@@ -34,6 +34,7 @@ declare global {
       dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => Promise<{ success: boolean; removed?: any; error?: string }>
       dbGetFTPPassword: (connectionId: number) => Promise<{ success: boolean; password?: string; error?: string }>
       dbGetEditedFiles?: (limit?: number) => Promise<{ success: boolean; files?: { file_path: string; last_edit: string; version_count: number }[]; error?: string }>
+      dbGetEditedFilesSince?: (sinceMs?: number, limit?: number) => Promise<{ success: boolean; files?: { file_path: string; last_edit: string; version_count: number }[]; error?: string }>
       settingsGetFTPConnections: () => Promise<{ success: boolean; connections?: any[]; error?: string }>
       settingsAddFTPConnection: (conn: { name: string; host: string; port: number; username: string; password: string; defaultPath: string; appendedUrl?: string }) => Promise<{ success: boolean; connection?: any; error?: string }>
       settingsRemoveFTPConnection: (id: number | string) => Promise<{ success: boolean; removed?: any; error?: string }>
@@ -84,6 +85,9 @@ declare global {
       onMenuEvent: (callback: (event: any, action: string) => void) => () => void
       onSyncProgress?: (callback: (event: any, payload: { count: number }) => void) => () => void
       onDriftDetected?: (callback: (event: any, payload: { path: string }) => void) => () => void
+      driftScanNow?: () => Promise<{ success: boolean; scanned?: number; error?: string }>
+      driftScanFull?: () => Promise<{ success: boolean; scanned?: number; error?: string }>
+      onDriftScanProgress?: (callback: (event: any, payload: { scanned: number; done?: boolean }) => void) => () => void
 
       // DevTools helpers
       inspectElementAt?: (x: number, y: number) => Promise<{ success: boolean; error?: string }>
@@ -127,6 +131,7 @@ export const electronAPI = {
   dbRemoveFTPConnection: (payload: { connectionId: number; userId: number }) => window.electronAPI?.dbRemoveFTPConnection(payload) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetFTPPassword: (connectionId: number) => window.electronAPI?.dbGetFTPPassword(connectionId) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   dbGetEditedFiles: (limit?: number) => (window.electronAPI && typeof window.electronAPI.dbGetEditedFiles === 'function') ? window.electronAPI.dbGetEditedFiles(limit) : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  dbGetEditedFilesSince: (sinceMs?: number, limit?: number) => (window.electronAPI && typeof window.electronAPI.dbGetEditedFilesSince === 'function') ? window.electronAPI.dbGetEditedFilesSince(sinceMs, limit) : Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsGetFTPConnections: () => window.electronAPI?.settingsGetFTPConnections() || Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsAddFTPConnection: (conn: { name: string; host: string; port: number; username: string; password: string; defaultPath: string; appendedUrl?: string }) => window.electronAPI?.settingsAddFTPConnection(conn) || Promise.resolve({ success: false, error: 'Electron API not available' }),
   settingsRemoveFTPConnection: (id: number | string) => window.electronAPI?.settingsRemoveFTPConnection(id) || Promise.resolve({ success: false, error: 'Electron API not available' }),
@@ -263,6 +268,15 @@ export const electronAPI = {
   onDriftDetected: (callback: (event: any, payload: { path: string }) => void) => {
     if (window.electronAPI?.onDriftDetected) {
       return window.electronAPI.onDriftDetected(callback)
+    }
+    return () => {}
+  },
+  driftScanNow: () => (window.electronAPI && typeof window.electronAPI.driftScanNow === 'function') ? window.electronAPI.driftScanNow() : Promise.resolve({ success: false, error: 'Electron API not available' })
+  ,
+  driftScanFull: () => (window.electronAPI && typeof window.electronAPI.driftScanFull === 'function') ? window.electronAPI.driftScanFull() : Promise.resolve({ success: false, error: 'Electron API not available' }),
+  onDriftScanProgress: (callback: (event: any, payload: { scanned: number; done?: boolean }) => void) => {
+    if (window.electronAPI?.onDriftScanProgress) {
+      return window.electronAPI.onDriftScanProgress(callback)
     }
     return () => {}
   }

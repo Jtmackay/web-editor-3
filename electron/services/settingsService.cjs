@@ -133,6 +133,26 @@ class SettingsService {
     this.store.set('autoSnapshotOnPublish', v)
     return v
   }
+  getDriftLastScanTime() {
+    const v = Number(this.store.get('driftLastScanTimeMs', 0))
+    return isNaN(v) ? 0 : v
+  }
+  setDriftLastScanTime(ms) {
+    const n = Number(ms)
+    const safe = isNaN(n) ? Date.now() : n
+    this.store.set('driftLastScanTimeMs', safe)
+    return safe
+  }
+  getDriftBaselineTime() {
+    const v = Number(this.store.get('driftBaselineTimeMs', 0))
+    return isNaN(v) ? 0 : v
+  }
+  setDriftBaselineTime(ms) {
+    const n = Number(ms)
+    const safe = isNaN(n) ? Date.now() : n
+    this.store.set('driftBaselineTimeMs', safe)
+    return safe
+  }
   getImagePickerStartPath() {
     const raw = this.store.get('imagePickerStartPath', '/')
     let p = raw ? String(raw) : '/'

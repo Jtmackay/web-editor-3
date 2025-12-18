@@ -13,6 +13,9 @@ const HistoryPanel: React.FC = () => {
   const [compare, setCompare] = useState<{ left: string; right: string; language: string; timestamp?: string; key: string } | null>(null)
   const [editedFiles, setEditedFiles] = useState<{ file_path: string; last_edit: string; version_count: number }[]>([])
   const [tab, setTab] = useState<'versions' | 'recent'>('versions')
+  const [scanLoading, setScanLoading] = useState(false)
+  const [scanMsg, setScanMsg] = useState<string | null>(null)
+  const [scanCount, setScanCount] = useState<number>(0)
 
   useEffect(() => {
     const current = openFiles.find(f => f.kind !== 'preview')
@@ -27,8 +30,8 @@ const HistoryPanel: React.FC = () => {
     setError(null)
     try {
       const res = await electronAPI.dbGetFileVersions?.(target, 50)
-      if (res && res.success && Array.isArray(res.versions)) {
-        setVersions(res.versions)
+      if (res && res.success && Array.isArray((res as any).versions)) {
+        setVersions((res as any).versions)
       } else {
         setVersions([])
         setError((res && (res as any).error) || 'Failed to load versions')
@@ -46,15 +49,25 @@ const HistoryPanel: React.FC = () => {
     }
   }, [filePath])
 
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const res = await electronAPI.dbGetEditedFiles?.(200)
-        if (res && res.success && Array.isArray(res.files)) {
-          setEditedFiles(res.files)
+  const reloadRecent = async () => {
+    try {
+      const driftCfg = (await electronAPI.settingsGetDriftWatch?.()) as any
+      const baselineMs = driftCfg && driftCfg.success ? Number((driftCfg as any).baselineTimeMs || 0) : 0
+      if (baselineMs > 0) {
+        const list = (await electronAPI.dbGetEditedFilesSince?.(baselineMs, 200)) as any
+        if (list && list.success && Array.isArray((list as any).files)) {
+          setEditedFiles((list as any).files)
+          return
         }
-      } catch {}
-    })()
+      }
+      setEditedFiles([])
+    } catch {
+      setEditedFiles([])
+    }
+  }
+
+  useEffect(() => {
+    reloadRecent()
   }, [])
 
   const getLanguageFromExtension = (filename: string): string => {
@@ -69,23 +82,15 @@ const HistoryPanel: React.FC = () => {
 
   const openCompare = async (v: any) => {
     try {
-      let right = ''
-      const editor = useEditorStore.getState()
-      const opened = editor.openFiles.find((f) => f.path === v.file_path && (!f.kind || f.kind === 'code'))
-      if (opened) {
-        right = opened.content || ''
-      } else {
-        const dl = await electronAPI.ftpDownloadFile(v.file_path, undefined as any)
-        if (dl && dl.success && typeof dl.content === 'string') {
-          right = dl.content
-        }
-      }
-      const left = String(v.content || '')
       const language = getLanguageFromExtension(String(v.file_path || ''))
+      const idx = versions.findIndex((vv) => vv.id === v.id)
+      const prev = idx >= 0 && idx + 1 < versions.length ? versions[idx + 1] : null
+      const left = prev ? String(prev.content || '') : ''
+      const right = String(v.content || '')
       const key = `${String(v.id)}:${String(v.created_at || '')}:${String(v.file_path || '')}`
       setCompare({ left, right, language, timestamp: v.created_at, key })
     } catch (err) {
-      setError('Failed to load current content for comparison')
+      setError('Failed to prepare comparison')
     }
   }
 
@@ -98,7 +103,7 @@ const HistoryPanel: React.FC = () => {
   const openRecentFile = async (p: string) => {
     try {
       const dl = await electronAPI.ftpDownloadFile(p, undefined as any)
-      const content = dl && dl.success && typeof dl.content === 'string' ? dl.content : ''
+      const content = dl && dl.success && typeof (dl as any).content === 'string' ? (dl as any).content : ''
       const lang = getLanguageFromExtension(basename(p))
       const editor = useEditorStore.getState()
       const existing = editor.openFiles.find((f) => f.path === p && (!f.kind || f.kind === 'code'))
@@ -144,6 +149,66 @@ const HistoryPanel: React.FC = () => {
           className={`px-2 py-1 text-xs rounded border ${tab === 'recent' ? 'bg-vscode-selection text-white border-vscode-selection' : 'bg-vscode-sidebar border-vscode-border hover:bg-vscode-hover'}`}
           onClick={() => setTab('recent')}
         >Recent Edits</button>
+        {tab === 'recent' && (
+          <>
+            <button
+              className={`ml-auto px-2 py-1 text-xs rounded ${scanLoading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-accent text-white hover:bg-blue-600'}`}
+              disabled={scanLoading}
+              onClick={async () => {
+                setScanMsg(null)
+                setScanLoading(true)
+                setScanCount(0)
+                try {
+                  const off = electronAPI.onDriftScanProgress?.((_e, payload) => {
+                    if (payload && typeof payload.scanned === 'number') {
+                      setScanCount(payload.scanned)
+                    }
+                  })
+                  const res = await electronAPI.driftScanNow?.()
+                  if (off) off()
+                  if (res && res.success) {
+                    await reloadRecent()
+                    setScanMsg('Quick scan complete')
+                  } else {
+                    setScanMsg((res && (res as any).error) || 'Quick scan failed')
+                  }
+                } catch {
+                  setScanMsg('Quick scan failed')
+                } finally {
+                  setScanLoading(false)
+                }
+              }}
+            >{scanLoading ? `Quick… ${scanCount}` : 'Quick Scan'}</button>
+            <button
+              className={`px-2 py-1 text-xs rounded ${scanLoading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border'}`}
+              disabled={scanLoading}
+              onClick={async () => {
+                setScanMsg(null)
+                setScanLoading(true)
+                setScanCount(0)
+                try {
+                  const off = electronAPI.onDriftScanProgress?.((_e, payload) => {
+                    if (payload && typeof payload.scanned === 'number') {
+                      setScanCount(payload.scanned)
+                    }
+                  })
+                  const res = await electronAPI.driftScanFull?.()
+                  if (off) off()
+                  if (res && res.success) {
+                    await reloadRecent()
+                    setScanMsg('Full scan complete')
+                  } else {
+                    setScanMsg((res && (res as any).error) || 'Full scan failed')
+                  }
+                } catch {
+                  setScanMsg('Full scan failed')
+                } finally {
+                  setScanLoading(false)
+                }
+              }}
+            >{scanLoading ? `Full… ${scanCount}` : 'Full Scan'}</button>
+          </>
+        )}
       </div>
       {tab === 'versions' ? (
         <div className="flex-1 overflow-auto vscode-scrollbar">
@@ -156,20 +221,43 @@ const HistoryPanel: React.FC = () => {
           ) : (
             <div className="p-2 space-y-2">
               {versions.map((v, i) => (
-                <div key={v.id} className="border border-vscode-border rounded p-2 text-xs bg-vscode-bg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold">{i === 0 ? 'Current' : v.action}</span>
-                      <span className="ml-2 text-vscode-text-muted">{new Date(v.created_at).toLocaleString()}</span>
-                      {v.username && <span className="ml-2">by {v.username}</span>}
+                <div
+                  key={v.id}
+                  className={`rounded p-2 text-xs border ${
+                    (i === 0 ? 'current' : String(v.action || '')) === 'publish'
+                      ? 'border-green-500'
+                      : (i === 0 ? 'current' : String(v.action || '')) === 'external_change'
+                      ? 'border-blue-500'
+                      : (i === 0 ? 'current' : String(v.action || '')) === 'revert'
+                      ? 'border-red-500'
+                      : 'border-vscode-border'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex flex-col items-start">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] border ${
+                          (i === 0 ? 'current' : String(v.action || '')) === 'publish'
+                            ? 'bg-green-500/20 border-green-500 text-green-200'
+                            : (i === 0 ? 'current' : String(v.action || '')) === 'external_change'
+                            ? 'bg-blue-500/20 border-blue-500 text-blue-200'
+                            : (i === 0 ? 'current' : String(v.action || '')) === 'revert'
+                            ? 'bg-red-500/20 border-red-500 text-red-200'
+                            : 'bg-vscode-sidebar border-vscode-border'
+                        }`}
+                      >
+                        {i === 0 ? 'current' : String(v.action || '')}
+                      </span>
+                      <span className="mt-1 text-vscode-text-muted">{new Date(v.created_at).toLocaleString()}</span>
+                      {v.username && <span className="mt-1 text-[11px]">by {v.username}</span>}
                     </div>
-                    <div className="flex flex-col gap-1 items-end">
+                    <div className="flex flex-col items-end gap-2">
                       <button
-                        className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                        className="w-24 px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
                         onClick={async () => { await openCompare(v) }}
                       >Compare</button>
                       <button
-                        className="px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
+                        className="w-24 px-2 py-1 rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border"
                         onClick={async () => {
                           try {
                             const res = await electronAPI.dbRestoreFileVersion?.(v.id)
@@ -192,11 +280,19 @@ const HistoryPanel: React.FC = () => {
         </div>
       ) : (
         <div className="flex-1 overflow-auto vscode-scrollbar">
+          <div className="p-2 text-[11px] text-vscode-text-muted">
+            {scanLoading ? `Scanning… ${scanCount}` : (scanMsg || '')}
+          </div>
           {editedFiles.length === 0 ? (
             <div className="p-3 text-xs text-vscode-text-muted">No recent edits</div>
           ) : (
             <div className="p-2 space-y-1">
-              {editedFiles.map((f) => (
+              {editedFiles.filter((f) => {
+                const base = basename(String(f.file_path || ''))
+                const isHex = /^[a-f0-9]{12,64}$/i.test(base)
+                const hasExt = /\.[^./]+$/.test(base)
+                return hasExt && !isHex
+              }).map((f) => (
                 <div key={f.file_path} className="flex items-center justify-between px-2 py-1 hover:bg-vscode-hover cursor-pointer rounded"
                   onClick={() => openRecentFile(f.file_path)}
                 >
