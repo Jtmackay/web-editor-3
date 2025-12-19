@@ -155,6 +155,16 @@ class DatabaseService {
     return Array.from(set)
   }
 
+  async getAllVersionedPaths() {
+    if (this.dbAvailable && this.pool) {
+      const q = `SELECT DISTINCT file_path FROM file_versions`
+      const r = await this.pool.query(q)
+      return r.rows.map((row) => row.file_path)
+    }
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const set = new Set(all.map((r) => r.file_path))
+    return Array.from(set)
+  }
   async getEditedFiles(limit = 100) {
     if (this.dbAvailable && this.pool) {
       const q = `
@@ -256,7 +266,7 @@ class DatabaseService {
       const q = `SELECT fh.*, u.username, u.avatar_url
                  FROM file_history fh
                  JOIN users u ON fh.user_id = u.id
-                 WHERE fh.ftp_connection_id = $1 AND fh.file_path = $2
+                 WHERE (fh.ftp_connection_id IS NULL OR fh.ftp_connection_id = $1) AND fh.file_path = $2
                  ORDER BY fh.created_at DESC
                  LIMIT $3`
       const r = await this.pool.query(q, [ftpConnectionId, filePath, limit])
@@ -266,6 +276,24 @@ class DatabaseService {
     const filtered = all.filter((r) => String(r.file_path) === String(filePath))
     filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     return filtered.slice(0, limit)
+  }
+
+  async clearAllFileHistory() {
+    if (this.dbAvailable && this.pool) {
+      await this.pool.query('DELETE FROM file_history')
+      return true
+    }
+    this.local.set('file_history', [])
+    return true
+  }
+
+  async clearAllFileVersions() {
+    if (this.dbAvailable && this.pool) {
+      await this.pool.query('DELETE FROM file_versions')
+      return true
+    }
+    this.local.set('file_versions', [])
+    return true
   }
 }
 

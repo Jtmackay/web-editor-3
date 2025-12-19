@@ -10,7 +10,7 @@ const HistoryPanel: React.FC = () => {
   const [versions, setVersions] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [compare, setCompare] = useState<{ left: string; right: string; language: string; timestamp?: string; key: string } | null>(null)
+  const [compare, setCompare] = useState<{ left: string; right: string; language: string; leftTimestamp?: string; rightTimestamp?: string; key: string } | null>(null)
   const [editedFiles, setEditedFiles] = useState<{ file_path: string; last_edit: string; version_count: number }[]>([])
   const [tab, setTab] = useState<'versions' | 'recent'>('versions')
   const [scanLoading, setScanLoading] = useState(false)
@@ -69,6 +69,15 @@ const HistoryPanel: React.FC = () => {
   useEffect(() => {
     reloadRecent()
   }, [])
+  useEffect(() => {
+    const off = electronAPI.onDriftDetected?.((_e, payload: any) => {
+      const p = payload && payload.path ? String(payload.path) : ''
+      if (p && p === filePath) {
+        load(filePath)
+      }
+    })
+    return () => { if (off) off() }
+  }, [filePath])
 
   const getLanguageFromExtension = (filename: string): string => {
     const ext = filename.split('.').pop()?.toLowerCase()
@@ -88,7 +97,7 @@ const HistoryPanel: React.FC = () => {
       const left = prev ? String(prev.content || '') : ''
       const right = String(v.content || '')
       const key = `${String(v.id)}:${String(v.created_at || '')}:${String(v.file_path || '')}`
-      setCompare({ left, right, language, timestamp: v.created_at, key })
+      setCompare({ left, right, language, leftTimestamp: prev ? prev.created_at : undefined, rightTimestamp: v.created_at, key })
     } catch (err) {
       setError('Failed to prepare comparison')
     }
@@ -149,67 +158,76 @@ const HistoryPanel: React.FC = () => {
           className={`px-2 py-1 text-xs rounded border ${tab === 'recent' ? 'bg-vscode-selection text-white border-vscode-selection' : 'bg-vscode-sidebar border-vscode-border hover:bg-vscode-hover'}`}
           onClick={() => setTab('recent')}
         >Recent Edits</button>
-        {tab === 'recent' && (
-          <>
-            <button
-              className={`ml-auto px-2 py-1 text-xs rounded ${scanLoading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-accent text-white hover:bg-blue-600'}`}
-              disabled={scanLoading}
-              onClick={async () => {
-                setScanMsg(null)
-                setScanLoading(true)
-                setScanCount(0)
-                try {
-                  const off = electronAPI.onDriftScanProgress?.((_e, payload) => {
-                    if (payload && typeof payload.scanned === 'number') {
-                      setScanCount(payload.scanned)
-                    }
-                  })
-                  const res = await electronAPI.driftScanNow?.()
-                  if (off) off()
-                  if (res && res.success) {
-                    await reloadRecent()
-                    setScanMsg('Quick scan complete')
-                  } else {
-                    setScanMsg((res && (res as any).error) || 'Quick scan failed')
-                  }
-                } catch {
-                  setScanMsg('Quick scan failed')
-                } finally {
-                  setScanLoading(false)
-                }
-              }}
-            >{scanLoading ? `Quick… ${scanCount}` : 'Quick Scan'}</button>
-            <button
-              className={`px-2 py-1 text-xs rounded ${scanLoading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border'}`}
-              disabled={scanLoading}
-              onClick={async () => {
-                setScanMsg(null)
-                setScanLoading(true)
-                setScanCount(0)
-                try {
-                  const off = electronAPI.onDriftScanProgress?.((_e, payload) => {
-                    if (payload && typeof payload.scanned === 'number') {
-                      setScanCount(payload.scanned)
-                    }
-                  })
-                  const res = await electronAPI.driftScanFull?.()
-                  if (off) off()
-                  if (res && res.success) {
-                    await reloadRecent()
-                    setScanMsg('Full scan complete')
-                  } else {
-                    setScanMsg((res && (res as any).error) || 'Full scan failed')
-                  }
-                } catch {
-                  setScanMsg('Full scan failed')
-                } finally {
-                  setScanLoading(false)
-                }
-              }}
-            >{scanLoading ? `Full… ${scanCount}` : 'Full Scan'}</button>
-          </>
-        )}
       </div>
+      {tab === 'recent' && (
+      <div className="p-3 border-t border-vscode-border flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            className={`px-3 py-1.5 text-[70%] rounded ${scanLoading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-accent text-white hover:bg-blue-600'}`}
+            disabled={scanLoading}
+            onClick={async () => {
+              setScanMsg(null)
+              setScanLoading(true)
+              setScanCount(0)
+              try {
+                const off = electronAPI.onDriftScanProgress?.((_e, payload) => {
+                  if (payload && typeof payload.scanned === 'number') {
+                    setScanCount(payload.scanned)
+                  }
+                })
+                const res = await electronAPI.driftScanNow?.()
+                if (off) off()
+                if (res && res.success) {
+                  await reloadRecent()
+                  if (filePath) { await load(filePath) }
+                  setScanMsg('Quick scan complete')
+                } else {
+                  setScanMsg((res && (res as any).error) || 'Quick scan failed')
+                }
+              } catch {
+                setScanMsg('Quick scan failed')
+              } finally {
+                setScanLoading(false)
+              }
+            }}
+          >{scanLoading ? 'Quick…' : 'Quick Scan'}</button>
+          <button
+            className={`px-3 py-1.5 text-[70%] rounded ${scanLoading ? 'bg-vscode-border text-vscode-text-muted' : 'bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border'}`}
+            disabled={scanLoading}
+            onClick={async () => {
+              setScanMsg(null)
+              setScanLoading(true)
+              setScanCount(0)
+              try {
+                const off = electronAPI.onDriftScanProgress?.((_e, payload) => {
+                  if (payload && typeof payload.scanned === 'number') {
+                    setScanCount(payload.scanned)
+                  }
+                })
+                const confirmed = window.confirm('Warning: This will reset the baseline for these files and delete old version history. Continue?')
+                if (!confirmed) {
+                  setScanLoading(false)
+                  return
+                }
+                const res = await electronAPI.driftScanFull?.()
+                if (off) off()
+                if (res && res.success) {
+                  await reloadRecent()
+                  setScanMsg('Full scan complete')
+                } else {
+                  setScanMsg((res && (res as any).error) || 'Full scan failed')
+                }
+              } catch {
+                setScanMsg('Full scan failed')
+              } finally {
+                setScanLoading(false)
+              }
+            }}
+          >{scanLoading ? 'Full…' : 'Full Scan'}</button>
+        </div>
+        <div className="text-[11px] text-vscode-text-muted">{scanLoading ? `Scanning… ${scanCount}` : (scanMsg || '')}</div>
+      </div>
+      )}
       {tab === 'versions' ? (
         <div className="flex-1 overflow-auto vscode-scrollbar">
           {loading ? (
@@ -221,23 +239,16 @@ const HistoryPanel: React.FC = () => {
           ) : (
             <div className="p-2 space-y-2">
               {versions.map((v, i) => (
-                <div
-                  key={v.id}
-                  className={`rounded p-2 text-xs border ${
-                    (i === 0 ? 'current' : String(v.action || '')) === 'publish'
-                      ? 'border-green-500'
-                      : (i === 0 ? 'current' : String(v.action || '')) === 'external_change'
-                      ? 'border-blue-500'
-                      : (i === 0 ? 'current' : String(v.action || '')) === 'revert'
-                      ? 'border-red-500'
-                      : 'border-vscode-border'
-                  }`}
-                >
+                <div key={v.id} className="rounded p-2 text-xs border border-vscode-border">
                   <div className="flex items-start justify-between">
                     <div className="flex flex-col items-start">
                       <span
                         className={`px-2 py-0.5 rounded text-[10px] border ${
-                          (i === 0 ? 'current' : String(v.action || '')) === 'publish'
+                          (i === 0 ? 'current' : String(v.action || '')) === 'current'
+                            ? 'bg-yellow-500/20 border-yellow-500 text-yellow-200'
+                            : (i === 0 ? 'current' : String(v.action || '')) === 'baseline'
+                            ? 'bg-purple-500/20 border-purple-500 text-purple-200'
+                            : (i === 0 ? 'current' : String(v.action || '')) === 'publish'
                             ? 'bg-green-500/20 border-green-500 text-green-200'
                             : (i === 0 ? 'current' : String(v.action || '')) === 'external_change'
                             ? 'bg-blue-500/20 border-blue-500 text-blue-200'
@@ -280,9 +291,6 @@ const HistoryPanel: React.FC = () => {
         </div>
       ) : (
         <div className="flex-1 overflow-auto vscode-scrollbar">
-          <div className="p-2 text-[11px] text-vscode-text-muted">
-            {scanLoading ? `Scanning… ${scanCount}` : (scanMsg || '')}
-          </div>
           {editedFiles.length === 0 ? (
             <div className="p-3 text-xs text-vscode-text-muted">No recent edits</div>
           ) : (
@@ -310,9 +318,14 @@ const HistoryPanel: React.FC = () => {
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs">
                 <span className="font-semibold">Compare</span>
-                {compare.timestamp && <span className="ml-2 text-vscode-text-muted">Version: {new Date(compare.timestamp).toLocaleString()}</span>}
+                <div className="mt-1">
+                  <span className="text-vscode-text-muted">Original: {compare.leftTimestamp ? new Date(compare.leftTimestamp).toLocaleString() : 'N/A'}</span>
+                </div>
               </div>
-              <button className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setCompare(null)}>Close</button>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-vscode-text-muted">Modified: {compare.rightTimestamp ? new Date(compare.rightTimestamp).toLocaleString() : 'N/A'}</span>
+                <button className="px-2 py-1 text-xs rounded bg-vscode-sidebar hover:bg-vscode-hover border border-vscode-border" onClick={() => setCompare(null)}>Close</button>
+              </div>
             </div>
             <div className="h-[70vh]">
               <DiffEditor

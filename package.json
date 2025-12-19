@@ -21,7 +21,8 @@
     "start": "concurrently -k \"npm:dev\" \"npm:electron:watch\"",
     "clean": "rimraf dist dist-electron .cache",
     "electron:build": "npm run build && electron-builder",
-    "electron:pack": "npm run build && electron-builder --dir"
+    "electron:pack": "npm run build && electron-builder --dir",
+    "test:drift": "node scripts/drift-verify.cjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

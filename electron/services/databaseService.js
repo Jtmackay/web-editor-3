@@ -537,6 +537,16 @@ class DatabaseService {
     return Array.from(set)
   }
 
+  async getAllVersionedPaths() {
+    if (this.dbAvailable && this.pool) {
+      const query = `SELECT DISTINCT file_path FROM file_versions`
+      const result = await this.pool.query(query)
+      return result.rows.map((row) => row.file_path)
+    }
+    const all = Array.isArray(this.local.get('file_versions')) ? this.local.get('file_versions') : []
+    const set = new Set(all.map((r) => r.file_path))
+    return Array.from(set)
+  }
   async addFileVersion(ftpConnectionId, filePath, userId, content, contentHash, action, parentVersionId = null) {
     const query = `
       INSERT INTO file_versions (ftp_connection_id, file_path, user_id, content, content_hash, action, parent_version_id)

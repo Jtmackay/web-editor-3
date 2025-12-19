@@ -28,6 +28,51 @@ let driftInitialTimeoutHandle = null
 
 const isDev = process.env.NODE_ENV === 'development'
 
+function restartDriftWatcher() {
+  try {
+    if (driftInitialTimeoutHandle) {
+      clearTimeout(driftInitialTimeoutHandle)
+      driftInitialTimeoutHandle = null
+    }
+    if (driftIntervalHandle) {
+      clearInterval(driftIntervalHandle)
+      driftIntervalHandle = null
+    }
+    if (settingsService && settingsService.getDriftWatchEnabled && settingsService.getDriftWatchEnabled()) {
+      const intervalMs = settingsService.getDriftWatchIntervalMinutes() * 60 * 1000
+      const runCheck = async () => {
+        try {
+          if (!settingsService.getDriftWatchEnabled()) return
+          const lastScanMs = settingsService.getDriftLastScanTime ? settingsService.getDriftLastScanTime() : 0
+          const paths = await databaseService.getRecentVersionedPaths(30)
+          for (const p of paths) {
+            try {
+              const latest = await databaseService.getLatestFileVersion(null, p)
+              if (!latest) continue
+              let remoteContent = ''
+              try { remoteContent = await ftpService.downloadFile(p, null) } catch { continue }
+              const crypto = require('crypto')
+              const remoteHash = crypto.createHash('md5').update(String(remoteContent || '')).digest('hex')
+              if (remoteHash !== latest.content_hash) {
+                let user = null
+                try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+                const userId = user && user.id ? user.id : null
+                try { await databaseService.addFileVersion(null, p, userId, remoteContent, remoteHash, 'external_change', latest.id) } catch {}
+                try { await databaseService.addFileHistory(null, p, userId, 'external_change', remoteHash, 'Detected drift') } catch {}
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+                }
+              }
+            } catch {}
+          }
+          try { settingsService.setDriftLastScanTime(Date.now()) } catch {}
+        } catch {}
+      }
+      driftInitialTimeoutHandle = setTimeout(runCheck, 10000)
+      driftIntervalHandle = setInterval(runCheck, intervalMs)
+    }
+  } catch {}
+}
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -754,42 +799,41 @@ function setupIPC() {
         let scanned = 0
         const YIELD_EVERY = 50
         const THROTTLE_EVERY = 10
+        const MAX_DEPTH = 5
         const crypto = require('crypto')
 
-        try {
-          const paths = await databaseService.getRecentVersionedPaths(30)
-          for (const p of paths) {
-            try {
-              const latest = await databaseService.getLatestFileVersion(null, p)
-              if (!latest) continue
-              let remoteContent = ''
-              try { remoteContent = await ftpService.downloadFile(p, null) } catch { continue }
-              const remoteHash = crypto.createHash('md5').update(String(remoteContent || '')).digest('hex')
-              if (remoteHash !== latest.content_hash) {
-                let user = null
-                try { user = await databaseService.getOrCreateDefaultUser() } catch {}
-                const userId = user && user.id ? user.id : null
-                try { await databaseService.addFileVersion(null, p, userId, remoteContent, remoteHash, 'external_change', latest.id) } catch {}
-                try { await databaseService.addFileHistory(null, p, userId, 'external_change', remoteHash, 'Detected drift') } catch {}
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                  try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+        if (baselineMs <= 0) {
+          try {
+            const paths = await databaseService.getRecentVersionedPaths(30)
+            for (const p of paths) {
+              try {
+                const name = String(p || '').replace(/\\/g, '/').split('/').pop() || ''
+                if (isIgnored(p, name)) {
+                  continue
                 }
-              }
-              scanned++
-              if (scanned % THROTTLE_EVERY === 0 && mainWindow && !mainWindow.isDestroyed()) {
-                try { mainWindow.webContents.send('drift-scan-progress', { scanned }) } catch {}
-              }
-              if (scanned % YIELD_EVERY === 0) { await new Promise((resolve) => setTimeout(resolve, 0)) }
-            } catch {}
-          }
-        } catch {}
-
-        if (baselineMs > 0) {
-          try { settingsService.setDriftLastScanTime(Date.now()) } catch {}
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            try { mainWindow.webContents.send('drift-scan-progress', { scanned, done: true }) } catch {}
-          }
-          return { success: true, scanned }
+                const latest = await databaseService.getLatestFileVersion(null, p)
+                if (!latest) continue
+                let remoteContent = ''
+                try { remoteContent = await ftpService.downloadFile(p, null) } catch { continue }
+                const remoteHash = crypto.createHash('md5').update(String(remoteContent || '')).digest('hex')
+                if (remoteHash !== latest.content_hash) {
+                  let user = null
+                  try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+                  const userId = user && user.id ? user.id : null
+                  try { await databaseService.addFileVersion(null, p, userId, remoteContent, remoteHash, 'external_change', latest.id) } catch {}
+                  try { await databaseService.addFileHistory(null, p, userId, 'external_change', remoteHash, 'Detected drift') } catch {}
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+                  }
+                }
+                scanned++
+                if (scanned % THROTTLE_EVERY === 0 && mainWindow && !mainWindow.isDestroyed()) {
+                  try { mainWindow.webContents.send('drift-scan-progress', { scanned }) } catch {}
+                }
+                if (scanned % YIELD_EVERY === 0) { await new Promise((resolve) => setTimeout(resolve, 0)) }
+              } catch {}
+            }
+          } catch {}
         }
 
         try {
@@ -828,16 +872,6 @@ function setupIPC() {
               } else if (item && item.type === 'file') {
                 const skip = isIgnored(p, item.name || '')
                 if (skip) continue
-                const baseName = item.name || (p.split('/').pop() || '')
-                const ext = (baseName.split('.').pop() || '').toLowerCase()
-                if (!ALLOWED_EXT.has(ext)) {
-                  scanned++
-                  if (scanned % THROTTLE_EVERY === 0 && mainWindow && !mainWindow.isDestroyed()) {
-                    try { mainWindow.webContents.send('drift-scan-progress', { scanned }) } catch {}
-                  }
-                  if (scanned % YIELD_EVERY === 0) { await new Promise((resolve) => setTimeout(resolve, 0)) }
-                  continue
-                }
                 const latest = await databaseService.getLatestFileVersion(null, p)
                 const modifiedMs = item.modified ? new Date(item.modified).getTime() : (item.modifiedAt ? new Date(item.modifiedAt).getTime() : 0)
               const changedSinceLastScan = modifiedMs > 0 ? modifiedMs > thresholdMs : false
@@ -881,11 +915,44 @@ function setupIPC() {
             }
           }
 
-          for (const base of bases) {
-            const b = String(base || '/').replace(/\\/g, '/')
-            if (seen.has(b)) continue
-            seen.add(b)
-            await walk(b, 0, MAX_DEPTH)
+          if (baselineMs > 0) {
+            try {
+              const knownPaths = await databaseService.getAllVersionedPaths()
+              for (const p of knownPaths) {
+                try {
+                  const name = String(p || '').replace(/\\/g, '/').split('/').pop() || ''
+                  if (isIgnored(p, name)) {
+                    continue
+                  }
+                  const latest = await databaseService.getLatestFileVersion(null, p)
+                  if (!latest) continue
+                  const content = await ftpService.downloadFile(p, null)
+                  const hash = crypto.createHash('md5').update(String(content || '')).digest('hex')
+                  if (hash !== latest.content_hash) {
+                    let user = null
+                    try { user = await databaseService.getOrCreateDefaultUser() } catch {}
+                    const userId = user && user.id ? user.id : null
+                    await databaseService.addFileVersion(null, p, userId, content, hash, 'external_change', latest.id)
+                    await databaseService.addFileHistory(null, p, userId, 'external_change', hash, 'Detected drift')
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                      try { mainWindow.webContents.send('drift-detected', { path: p }) } catch {}
+                    }
+                  }
+                  scanned++
+                  if (scanned % THROTTLE_EVERY === 0 && mainWindow && !mainWindow.isDestroyed()) {
+                    try { mainWindow.webContents.send('drift-scan-progress', { scanned }) } catch {}
+                  }
+                  if (scanned % YIELD_EVERY === 0) { await new Promise((resolve) => setTimeout(resolve, 0)) }
+                } catch {}
+              }
+            } catch {}
+          } else {
+            for (const base of bases) {
+              const b = String(base || '/').replace(/\\/g, '/')
+              if (seen.has(b)) continue
+              seen.add(b)
+              await walk(b, 0, MAX_DEPTH)
+            }
           }
         } catch {}
 
@@ -901,6 +968,12 @@ function setupIPC() {
   ipcMain.handle('drift-scan-full', async () => {
     return runQueued(async () => {
       try {
+        try {
+          if (driftInitialTimeoutHandle) { clearTimeout(driftInitialTimeoutHandle); driftInitialTimeoutHandle = null }
+          if (driftIntervalHandle) { clearInterval(driftIntervalHandle); driftIntervalHandle = null }
+        } catch {}
+        try { await databaseService.clearAllFileHistory() } catch {}
+        try { await databaseService.clearAllFileVersions() } catch {}
         let scanned = 0
         const YIELD_EVERY = 50
         const THROTTLE_EVERY = 10
@@ -977,6 +1050,7 @@ function setupIPC() {
         }
 
         try { settingsService.setDriftBaselineTime(Date.now()) } catch {}
+        try { restartDriftWatcher() } catch {}
         if (mainWindow && !mainWindow.isDestroyed()) {
           try { mainWindow.webContents.send('drift-scan-progress', { scanned, done: true }) } catch {}
         }
