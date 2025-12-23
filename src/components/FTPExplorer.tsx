@@ -12,7 +12,8 @@ import {
   Server,
   Download,
   Image as ImageIcon,
-  Archive as ArchiveIcon
+  Archive as ArchiveIcon,
+  LogOut
 } from 'lucide-react'
 import { useFTPStore, FTPFile, FileStatus } from '../stores/ftpStore'
 import { useEditorStore } from '../stores/editorStore'
@@ -448,6 +449,24 @@ const FTPExplorer: React.FC = () => {
     }
   }
 
+  const handleDisconnectClick = async () => {
+    try {
+      const res = await electronAPI.ftpDisconnect()
+      if (!res.success) {
+        setError(res.error || 'Failed to disconnect')
+        return
+      }
+      const { setConnectionStatus, setActiveConnection, setCurrentPath, setFiles } = useFTPStore.getState()
+      setConnectionStatus(false)
+      setActiveConnection(null)
+      setCurrentPath('/')
+      setFiles([])
+      setError(null)
+    } catch {
+      setError('Failed to disconnect')
+    }
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && showConnectionDialog) {
@@ -856,6 +875,13 @@ const FTPExplorer: React.FC = () => {
               disabled={syncing}
             >
               <Download size={14} />
+            </button>
+            <button
+              onClick={handleDisconnectClick}
+              className="p-2 hover:bg-vscode-hover rounded transition-colors"
+              title="Disconnect from FTP"
+            >
+              <LogOut size={14} />
             </button>
             {syncing && (
               <span className="text-xs text-vscode-text-muted ml-1">

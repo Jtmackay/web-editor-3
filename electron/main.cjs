@@ -25,6 +25,7 @@ let fileCacheService
 let settingsService
 let driftIntervalHandle = null
 let driftInitialTimeoutHandle = null
+let driftScheduleTimeoutHandle = null
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -38,8 +39,21 @@ function restartDriftWatcher() {
       clearInterval(driftIntervalHandle)
       driftIntervalHandle = null
     }
+    if (driftScheduleTimeoutHandle) {
+      clearTimeout(driftScheduleTimeoutHandle)
+      driftScheduleTimeoutHandle = null
+    }
     if (settingsService && settingsService.getDriftWatchEnabled && settingsService.getDriftWatchEnabled()) {
-      const intervalMs = settingsService.getDriftWatchIntervalMinutes() * 60 * 1000
+      const timeOfDay = settingsService.getDriftWatchTimeOfDay ? settingsService.getDriftWatchTimeOfDay() : '02:00'
+      const getNextDelayMs = (t) => {
+        const m = /^(\d{2}):(\d{2})$/.exec(String(t || '02:00'))
+        const now = new Date()
+        let h = 2, mi = 0
+        if (m) { const hh = Number(m[1]); const mm = Number(m[2]); if (!isNaN(hh) && !isNaN(mm)) { h = hh; mi = mm } }
+        const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, mi, 0, 0)
+        if (target.getTime() <= now.getTime()) { target.setDate(target.getDate() + 1) }
+        return target.getTime() - now.getTime()
+      }
       const runCheck = async () => {
         try {
           if (!settingsService.getDriftWatchEnabled()) return
@@ -66,10 +80,16 @@ function restartDriftWatcher() {
             } catch {}
           }
           try { settingsService.setDriftLastScanTime(Date.now()) } catch {}
+          try {
+            const d = getNextDelayMs(timeOfDay)
+            driftScheduleTimeoutHandle = setTimeout(runCheck, d)
+          } catch {}
         } catch {}
       }
-      driftInitialTimeoutHandle = setTimeout(runCheck, 10000)
-      driftIntervalHandle = setInterval(runCheck, intervalMs)
+      try {
+        const d = getNextDelayMs(timeOfDay)
+        driftScheduleTimeoutHandle = setTimeout(runCheck, d)
+      } catch {}
     }
   } catch {}
 }
@@ -509,6 +529,7 @@ function setupIPC() {
         success: true,
         enabled: settingsService.getDriftWatchEnabled(),
         intervalMinutes: settingsService.getDriftWatchIntervalMinutes(),
+        timeOfDay: settingsService.getDriftWatchTimeOfDay ? settingsService.getDriftWatchTimeOfDay() : '02:00',
         policy: settingsService.getDriftPolicy(),
         protectedPaths: settingsService.getProtectedPaths(),
         baselineTimeMs: settingsService.getDriftBaselineTime ? settingsService.getDriftBaselineTime() : 0
@@ -519,6 +540,7 @@ function setupIPC() {
     try {
       const enabled = settingsService.setDriftWatchEnabled(!!(cfg && cfg.enabled))
       const intervalMinutes = settingsService.setDriftWatchIntervalMinutes((cfg && cfg.intervalMinutes) || settingsService.getDriftWatchIntervalMinutes())
+      const timeOfDay = settingsService.setDriftWatchTimeOfDay((cfg && cfg.timeOfDay) || (settingsService.getDriftWatchTimeOfDay ? settingsService.getDriftWatchTimeOfDay() : '02:00'))
       const policy = settingsService.setDriftPolicy((cfg && cfg.policy) || settingsService.getDriftPolicy())
       const protectedPaths = settingsService.setProtectedPaths((cfg && cfg.protectedPaths) || settingsService.getProtectedPaths())
       try {
@@ -530,8 +552,20 @@ function setupIPC() {
           clearInterval(driftIntervalHandle)
           driftIntervalHandle = null
         }
+        if (driftScheduleTimeoutHandle) {
+          clearTimeout(driftScheduleTimeoutHandle)
+          driftScheduleTimeoutHandle = null
+        }
         if (enabled) {
-          const intervalMs = settingsService.getDriftWatchIntervalMinutes() * 60 * 1000
+          const getNextDelayMs = (t) => {
+            const m = /^(\d{2}):(\d{2})$/.exec(String(t || '02:00'))
+            const now = new Date()
+            let h = 2, mi = 0
+            if (m) { const hh = Number(m[1]); const mm = Number(m[2]); if (!isNaN(hh) && !isNaN(mm)) { h = hh; mi = mm } }
+            const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, mi, 0, 0)
+            if (target.getTime() <= now.getTime()) { target.setDate(target.getDate() + 1) }
+            return target.getTime() - now.getTime()
+          }
           const runCheck = async () => {
             try {
               if (!settingsService.getDriftWatchEnabled()) return
@@ -558,13 +592,19 @@ function setupIPC() {
                 } catch {}
               }
               try { settingsService.setDriftLastScanTime(Date.now()) } catch {}
+              try {
+                const d = getNextDelayMs(timeOfDay)
+                driftScheduleTimeoutHandle = setTimeout(runCheck, d)
+              } catch {}
             } catch {}
           }
-          driftInitialTimeoutHandle = setTimeout(runCheck, 10000)
-          driftIntervalHandle = setInterval(runCheck, intervalMs)
+          try {
+            const d = getNextDelayMs(timeOfDay)
+            driftScheduleTimeoutHandle = setTimeout(runCheck, d)
+          } catch {}
         }
       } catch {}
-      return { success: true, enabled, intervalMinutes, policy, protectedPaths }
+      return { success: true, enabled, intervalMinutes, timeOfDay, policy, protectedPaths }
     } catch (error) { return { success: false, error: error.message } }
   })
   ipcMain.handle('settings-get-editor-name', async () => {
@@ -1081,7 +1121,16 @@ app.whenReady().then(async () => {
   const startDriftWatcher = () => {
     try {
       if (!settingsService.getDriftWatchEnabled()) return
-      const intervalMs = settingsService.getDriftWatchIntervalMinutes() * 60 * 1000
+      const timeOfDay = settingsService.getDriftWatchTimeOfDay ? settingsService.getDriftWatchTimeOfDay() : '02:00'
+      const getNextDelayMs = (t) => {
+        const m = /^(\d{2}):(\d{2})$/.exec(String(t || '02:00'))
+        const now = new Date()
+        let h = 2, mi = 0
+        if (m) { const hh = Number(m[1]); const mm = Number(m[2]); if (!isNaN(hh) && !isNaN(mm)) { h = hh; mi = mm } }
+        const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, mi, 0, 0)
+        if (target.getTime() <= now.getTime()) { target.setDate(target.getDate() + 1) }
+        return target.getTime() - now.getTime()
+      }
       const runCheck = async () => {
         try {
           if (!settingsService.getDriftWatchEnabled()) return
@@ -1109,10 +1158,16 @@ app.whenReady().then(async () => {
           }
           // Keep automatic watcher lightweight; traversal is handled by on-demand scans.
           try { settingsService.setDriftLastScanTime(Date.now()) } catch {}
+          try {
+            const d = getNextDelayMs(timeOfDay)
+            driftScheduleTimeoutHandle = setTimeout(runCheck, d)
+          } catch {}
         } catch {}
       }
-      driftInitialTimeoutHandle = setTimeout(runCheck, 10000)
-      driftIntervalHandle = setInterval(runCheck, intervalMs)
+      try {
+        const d = getNextDelayMs(timeOfDay)
+        driftScheduleTimeoutHandle = setTimeout(runCheck, d)
+      } catch {}
     } catch {}
   }
 

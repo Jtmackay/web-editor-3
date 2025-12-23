@@ -183,7 +183,7 @@ const SettingsPanel: React.FC = () => {
   const [editorName, setEditorName] = useState('')
   const [enablePreviewInspector, setEnablePreviewInspector] = useState(false)
   const [driftEnabled, setDriftEnabled] = useState(true)
-  const [driftInterval, setDriftInterval] = useState<number | string>(60)
+  const [driftTimeOfDay, setDriftTimeOfDay] = useState<string>('02:00')
   const [dbHost, setDbHost] = useState('')
   const [dbPort, setDbPort] = useState<number | string>('')
   const [dbName, setDbName] = useState('')
@@ -243,7 +243,7 @@ const SettingsPanel: React.FC = () => {
         }
         if (mounted && driftRes && driftRes.success) {
           if (typeof driftRes.enabled === 'boolean') setDriftEnabled(!!driftRes.enabled)
-          if (typeof driftRes.intervalMinutes === 'number') setDriftInterval(driftRes.intervalMinutes)
+          if (typeof driftRes.timeOfDay === 'string') setDriftTimeOfDay(driftRes.timeOfDay)
         }
         if (mounted && imagePickerRes && imagePickerRes.success && typeof imagePickerRes.path === 'string') {
           setImagePickerStartPath(imagePickerRes.path)
@@ -368,7 +368,7 @@ const SettingsPanel: React.FC = () => {
               const next = e.target.checked
               setDriftEnabled(next)
               try {
-                const res = await electronAPI.settingsSetDriftWatch?.({ enabled: next, intervalMinutes: Number(driftInterval) || 60 })
+                const res = await electronAPI.settingsSetDriftWatch?.({ enabled: next, timeOfDay: driftTimeOfDay })
                 if (!res || !res.success) {
                   setError((res && (res as any).error) || 'Failed to update drift watcher setting')
                 } else {
@@ -383,27 +383,25 @@ const SettingsPanel: React.FC = () => {
           <span>Enable automatic drift watcher</span>
         </label>
         <div className="mt-2 flex items-center gap-2">
-          <label className="text-xs">Interval (minutes)</label>
+          <label className="text-xs">Time (local)</label>
           <input
-            type="number"
-            min={5}
-            value={driftInterval}
-            onChange={(e) => setDriftInterval(e.target.value)}
+            type="time"
+            value={driftTimeOfDay}
+            onChange={(e) => setDriftTimeOfDay(e.target.value)}
             onBlur={async () => {
               try {
-                const mins = Number(driftInterval) || 60
-                const res = await electronAPI.settingsSetDriftWatch?.({ intervalMinutes: mins, enabled: driftEnabled })
+                const res = await electronAPI.settingsSetDriftWatch?.({ timeOfDay: driftTimeOfDay, enabled: driftEnabled })
                 if (!res || !res.success) {
-                  setError((res && (res as any).error) || 'Failed to update watcher interval')
+                  setError((res && (res as any).error) || 'Failed to update watcher time')
                 } else {
-                  setStatus(`Interval set to ${mins} minutes`)
+                  setStatus(`Watcher time set to ${driftTimeOfDay}`)
                 }
               } catch (err) {
-                console.error('Failed to update watcher interval', err)
-                setError('Failed to update watcher interval')
+                console.error('Failed to update watcher time', err)
+                setError('Failed to update watcher time')
               }
             }}
-            className="w-20 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+            className="w-28 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
           />
         </div>
       </section>

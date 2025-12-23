@@ -48,8 +48,8 @@ declare global {
       settingsSetPreviewBaseUrl: (baseUrl: string) => Promise<{ success: boolean; baseUrl?: string; error?: string }>
       settingsGetPreviewStartAfter: () => Promise<{ success: boolean; startAfter?: string; error?: string }>
       settingsSetPreviewStartAfter: (startAfter: string) => Promise<{ success: boolean; startAfter?: string; error?: string }>
-      settingsGetDriftWatch?: () => Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>
-      settingsSetDriftWatch?: (cfg: { enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[] }) => Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>
+      settingsGetDriftWatch?: () => Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>
+      settingsSetDriftWatch?: (cfg: { enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[] }) => Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>
       openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
 
       settingsGetEditorName: () => Promise<{ success: boolean; name?: string; error?: string }>
@@ -187,14 +187,14 @@ export const electronAPI = {
           success: false,
           error: 'Electron API not available'
         }),
-  settingsGetDriftWatch: (): Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }> =>
+  settingsGetDriftWatch: (): Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }> =>
     (window.electronAPI && typeof window.electronAPI.settingsGetDriftWatch === 'function')
       ? window.electronAPI.settingsGetDriftWatch()
-      : Promise.resolve<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>({ success: true, enabled: true, intervalMinutes: 60, policy: 'alert', protectedPaths: [] }),
-  settingsSetDriftWatch: (cfg: { enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[] }): Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }> =>
+      : Promise.resolve<{ success: boolean; enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>({ success: true, enabled: true, intervalMinutes: 60, timeOfDay: '02:00', policy: 'alert', protectedPaths: [] }),
+  settingsSetDriftWatch: (cfg: { enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[] }): Promise<{ success: boolean; enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }> =>
     (window.electronAPI && typeof window.electronAPI.settingsSetDriftWatch === 'function')
       ? window.electronAPI.settingsSetDriftWatch(cfg)
-      : Promise.resolve<{ success: boolean; enabled?: boolean; intervalMinutes?: number; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>({ success: false, error: 'Electron API not available' }),
+      : Promise.resolve<{ success: boolean; enabled?: boolean; intervalMinutes?: number; timeOfDay?: string; policy?: 'alert'|'auto_restore'; protectedPaths?: string[]; error?: string }>({ success: false, error: 'Electron API not available' }),
   settingsGetEditorName: (): Promise<{ success: boolean; name?: string; error?: string }> =>
     (window.electronAPI && typeof window.electronAPI.settingsGetEditorName === 'function')
       ? window.electronAPI.settingsGetEditorName()

@@ -8,6 +8,7 @@ const MonacoEditor: React.FC = () => {
   const editorRef = useRef<any>(null)
   const changeTimerRef = useRef<number | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const findOpenRef = useRef<boolean>(false)
 
   const currentFile = openFiles.find(f => f.id === activeFile)
 
@@ -15,7 +16,18 @@ const MonacoEditor: React.FC = () => {
 
   const handleEditorDidMount = (editor: any) => {
     editorRef.current = editor
-    const selectionJustMadeRef: { current: boolean } = { current: false }
+    const isFindVisible = (): boolean => {
+      try {
+        const ctrl = editor.getContribution?.('editor.contrib.findController')
+        const state = ctrl?.getState?.()
+        return !!state?.isVisible
+      } catch {
+        return false
+      }
+    }
+    const isFindActive = (): boolean => {
+      return !!findOpenRef.current || isFindVisible()
+    }
     
     // Configure editor options to match VSCode
     editor.updateOptions({
@@ -53,34 +65,8 @@ const MonacoEditor: React.FC = () => {
       }, 60)
     })
 
-    editor.onDidChangeCursorSelection((e: any) => {
-      try { editor.focus() } catch {}
-      try {
-        const sel = e?.selection || editor.getSelection?.()
-        const hasSelection = sel && !sel.isEmpty?.()
-        if (hasSelection) {
-          selectionJustMadeRef.current = true
-        }
-      } catch {}
-    })
-    editor.onKeyDown?.((ev: any) => {
-      try {
-        if (!selectionJustMadeRef.current) return
-        const be = ev?.browserEvent
-        const key = be?.key || ''
-        const ctrl = be?.ctrlKey || be?.metaKey
-        const alt = be?.altKey
-        const isPrintable = key && key.length === 1 && !ctrl && !alt
-        if (!isPrintable) return
-        selectionJustMadeRef.current = false
-        ev.preventDefault?.()
-        ev.stopPropagation?.()
-        editor.trigger('keyboard', 'type', { text: key })
-      } catch {}
-    })
-    editor.onDidFocusEditorText?.(() => {
-      try { editor.focus() } catch {}
-    })
+    editor.onDidChangeCursorSelection?.(() => {})
+    editor.onKeyDown?.(() => {})
 
     try {
       editor.addAction({
@@ -109,6 +95,8 @@ const MonacoEditor: React.FC = () => {
     })
     return () => { unsubscribe && unsubscribe() }
   }, [])
+
+  // Removed custom find overlay and global key interception to match VSCode/Monaco behaviour
 
   useEffect(() => {
     const onInsertHtml = (e: Event) => {
@@ -148,10 +136,13 @@ const MonacoEditor: React.FC = () => {
   }
 
   return (
-    <div className="h-full w-full" onContextMenu={(e) => {
+    <div
+      className="h-full w-full"
+      onContextMenu={(e) => {
       e.preventDefault()
       setContextMenu({ x: e.clientX, y: e.clientY })
-    }}>
+    }}
+    >
       <Editor
         height="100%"
         language={currentFile.language}
@@ -171,7 +162,7 @@ const MonacoEditor: React.FC = () => {
           formatOnType: false,
           suggestOnTriggerCharacters: true,
           quickSuggestions: true,
-          wordBasedSuggestions: true,
+          wordBasedSuggestions: 'currentDocument',
           parameterHints: { enabled: true },
           hover: { enabled: true },
           folding: true,

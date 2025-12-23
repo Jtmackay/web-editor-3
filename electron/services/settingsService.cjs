@@ -107,6 +107,36 @@ class SettingsService {
     this.store.set('driftWatchIntervalMinutes', safe)
     return safe
   }
+  getDriftWatchTimeOfDay() {
+    const raw = this.store.get('driftWatchTimeOfDay', '02:00')
+    const s = raw ? String(raw) : '02:00'
+    const m = /^(\d{2}):(\d{2})$/.exec(s)
+    if (!m) return '02:00'
+    const h = Number(m[1])
+    const mi = Number(m[2])
+    if (isNaN(h) || isNaN(mi)) return '02:00'
+    if (h < 0 || h > 23 || mi < 0 || mi > 59) return '02:00'
+    const hh = h.toString().padStart(2, '0')
+    const mm = mi.toString().padStart(2, '0')
+    return `${hh}:${mm}`
+  }
+  setDriftWatchTimeOfDay(time) {
+    const s = time ? String(time) : '02:00'
+    const m = /^(\d{2}):(\d{2})$/.exec(s)
+    let hh = 2
+    let mm = 0
+    if (m) {
+      const h = Number(m[1])
+      const mi = Number(m[2])
+      if (!isNaN(h) && !isNaN(mi) && h >= 0 && h <= 23 && mi >= 0 && mi <= 59) {
+        hh = h
+        mm = mi
+      }
+    }
+    const out = `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`
+    this.store.set('driftWatchTimeOfDay', out)
+    return out
+  }
   getDriftPolicy() {
     const raw = String(this.store.get('driftPolicy', 'alert'))
     return raw === 'auto_restore' ? 'auto_restore' : 'alert'
