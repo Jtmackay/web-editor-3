@@ -3,14 +3,15 @@ import Editor from '@monaco-editor/react'
 import { useEditorStore } from '../stores/editorStore'
 import { electronAPI } from '../utils/electronAPI'
 
-const MonacoEditor: React.FC = () => {
+const MonacoEditor: React.FC<{ fileId?: string }> = ({ fileId }) => {
   const { openFiles, activeFile, updateFileContent } = useEditorStore()
   const editorRef = useRef<any>(null)
   const changeTimerRef = useRef<number | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const findOpenRef = useRef<boolean>(false)
 
-  const currentFile = openFiles.find(f => f.id === activeFile)
+  const targetId = fileId || activeFile
+  const currentFile = openFiles.find(f => f.id === targetId)
 
   
 
@@ -54,9 +55,9 @@ const MonacoEditor: React.FC = () => {
       }
       changeTimerRef.current = window.setTimeout(() => {
         const state = useEditorStore.getState()
-        const activeId = state.activeFile
-        if (!activeId) return
-        const file = state.openFiles.find((f) => f.id === activeId)
+        const target = fileId || state.activeFile
+        if (!target) return
+        const file = state.openFiles.find((f) => f.id === target)
         if (!file) return
         const val = editor.getValue()
         if (typeof val === 'string' && val !== file.content) {

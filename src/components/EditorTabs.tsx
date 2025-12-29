@@ -115,15 +115,15 @@ const EditorTabs: React.FC = () => {
 
   const handleSaveFile = async (file: EditorFile) => {
     if (file.kind === 'preview') return
-    const res = await electronAPI.localSaveFile(file.path, file.content)
+    const store = useEditorStore.getState()
+    const fresh = store.openFiles.find((f) => f.id === file.id) || file
+    const res = await electronAPI.localSaveFile(fresh.path, fresh.content)
     if (res.success) {
-      const store = useEditorStore.getState()
-      store.setFileDirty(file.id, false)
-      store.setStatusMessage(`Saved to sync folder: ${file.path}`)
+      store.setFileDirty(fresh.id, false)
+      store.setStatusMessage(`Saved to sync folder: ${fresh.path}`)
       store.setError(null)
       try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
     } else {
-      const store = useEditorStore.getState()
       store.setError(res.error || 'Failed to save file to sync folder')
       store.setStatusMessage(null)
     }
@@ -132,17 +132,18 @@ const EditorTabs: React.FC = () => {
   const handleSaveAndSync = async (file: EditorFile) => {
     if (file.kind === 'preview') return
     const store = useEditorStore.getState()
+    const fresh = store.openFiles.find((f) => f.id === file.id) || file
 
     const uid = store.currentUserId
     let newHash: string | null = null
 
     if (uid) {
-      newHash = await computeContentHash(file.content)
+      newHash = await computeContentHash(fresh.content)
       const activeRes = await electronAPI.dbGetActiveFiles()
       if (activeRes.success && activeRes.files) {
         const now = Date.now()
         const others = activeRes.files.filter(
-          (f: any) => f.file_path === file.path && f.user_id !== uid,
+          (f: any) => f.file_path === fresh.path && f.user_id !== uid,
         )
         const conflictingUsers: string[] = []
         for (const other of others) {
@@ -168,16 +169,16 @@ const EditorTabs: React.FC = () => {
     }
 
     const summary = 'Editor Save & Sync'
-    const pubRes = await electronAPI.publishFile?.({ remotePath: file.path, content: file.content, summary })
+    const pubRes = await electronAPI.publishFile?.({ remotePath: fresh.path, content: fresh.content, summary })
     if (pubRes && pubRes.success) {
-      store.setFileDirty(file.id, false)
-      store.setStatusMessage(`Saved and synced to server: ${file.path}`)
+      store.setFileDirty(fresh.id, false)
+      store.setStatusMessage(`Saved and synced to server: ${fresh.path}`)
       store.setError(null)
       try { window.dispatchEvent(new CustomEvent('preview:reload')) } catch {}
       if (uid) {
         try {
-          const hashToStore = newHash ?? (await computeContentHash(file.content))
-          await electronAPI.dbSetActiveFile(String(uid), file.path, hashToStore)
+          const hashToStore = newHash ?? (await computeContentHash(fresh.content))
+          await electronAPI.dbSetActiveFile(String(uid), fresh.path, hashToStore)
         } catch {}
       }
     } else {
@@ -244,6 +245,31 @@ const EditorTabs: React.FC = () => {
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={() => {
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('split:view', { detail: { fileId: contextMenu.file.id } })
+                )
+              } catch {}
+              setContextMenu(null)
+            }}
+          >
+            Split view
+          </button>
+          <button
+            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            onClick={() => {
+              try {
+                window.dispatchEvent(new CustomEvent('split:close'))
+              } catch {}
+              setContextMenu(null)
+            }}
+          >
+            Close split
+          </button>
+          <div className="h-px bg-vscode-border/50 my-1" />
           {(!contextMenu.file.kind || contextMenu.file.kind === 'code') && (
             <>
               <button

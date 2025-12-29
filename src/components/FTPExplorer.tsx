@@ -39,11 +39,13 @@ const normalizeFileType = (rawType: unknown, fallback: 'file' | 'directory' = 'f
 
 const isDirectoryEntry = (type: unknown): boolean => normalizeFileType(type, 'file') === 'directory'
 
-const FTPExplorer: React.FC = () => {
+const FTPExplorer: React.FC<{ nameQuery?: string; onNameQueryChange?: (q: string) => void }> = ({ nameQuery = '', onNameQueryChange }) => {
   const { files, isConnected, currentPath, setFiles, setLoading, setError, error, fileStatuses, setFileStatus } =
     useFTPStore()
   const { openFile: openEditorFile } = useEditorStore()
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [searchResults, setSearchResults] = useState<FTPFile[]>([])
+  const [isSearching, setIsSearching] = useState(false)
   const [folderChildren, setFolderChildren] = useState<Record<string, FTPFile[]>>({})
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({})
   const [showConnectionDialog, setShowConnectionDialog] = useState(false)
@@ -62,6 +64,8 @@ const FTPExplorer: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FTPFile } | null>(null)
   const [protectedPaths, setProtectedPaths] = useState<string[]>([])
   const [driftPaths, setDriftPaths] = useState<Set<string>>(new Set())
+  const searchTokenRef = useRef(0)
+  const [matchedPaths, setMatchedPaths] = useState<Set<string>>(new Set())
 
   const getStatusForPath = (path: string): FileStatus | undefined => {
     return fileStatuses[path]
@@ -210,6 +214,242 @@ const FTPExplorer: React.FC = () => {
     return next
   }
 
+  const listFilesSafe = async (p: string): Promise<{ success: boolean; files?: any[]; error?: string }> => {
+    // Prefer standard listFiles for reliability during search
+    try {
+      return await runQueued(() => electronAPI.ftpListFiles(p))
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  }
+
+  const loadChildrenIfNeeded = async (dirPath: string, token?: number): Promise<FTPFile[]> => {
+    if (folderChildren[dirPath]) return folderChildren[dirPath]
+    if (loadingChildren[dirPath]) return folderChildren[dirPath] || []
+    if (inFlightRef.current.has(dirPath)) return folderChildren[dirPath] || []
+    inFlightRef.current.add(dirPath)
+    setLoadingChildren((prev) => ({ ...prev, [dirPath]: true }))
+    try {
+      if (typeof token === 'number' && token !== searchTokenRef.current) {
+        return folderChildren[dirPath] || []
+      }
+      const res = await listFilesSafe(dirPath)
+      if (res.success && res.files) {
+        const mapped: FTPFile[] = res.files.map((item: any) => {
+          const fallbackType: 'file' | 'directory' = item && item.isDirectory === true ? 'directory' : 'file'
+          return {
+            name: item.name,
+            path: item.path,
+            type: normalizeFileType(item.type, fallbackType),
+            size: Number(item.size ?? 0) || 0,
+            modified: item.modified ? new Date(item.modified) : (item.modifiedAt ? new Date(item.modifiedAt) : new Date())
+          }
+        })
+        setFolderChildren((prev) => ({ ...prev, [dirPath]: mapped }))
+        return mapped
+      }
+    } finally {
+      setLoadingChildren((prev) => ({ ...prev, [dirPath]: false }))
+      inFlightRef.current.delete(dirPath)
+    }
+    return folderChildren[dirPath] || []
+  }
+
+  const [searchStats, setSearchStats] = useState({ scanned: 0, found: 0 })
+  const [searchIndex, setSearchIndex] = useState<{ paths: string[]; lastIndexed: number } | null>(null)
+  const [isIndexing, setIsIndexing] = useState(false)
+
+  // ...
+
+  const buildIndex = async (root: string) => {
+    if (isIndexing) return
+    setIsIndexing(true)
+    const paths: string[] = []
+    const queue: { path: string; depth: number }[] = [{ path: root, depth: 0 }]
+    const seen = new Set<string>()
+    let processed = 0
+    
+    // Use the same ignore logic
+    const shouldIgnore = (p: string, name: string) => {
+        const normP = normalizeRemotePath(p)
+        const isIgnored = syncIgnorePatterns.some((patternRaw) => {
+            if (!patternRaw) return false
+            const pattern = String(patternRaw)
+            if (pattern.includes('/') || pattern.startsWith('/')) {
+                const normPattern = normalizeRemotePath(pattern)
+                return normP === normPattern || normP.startsWith(normPattern + '/')
+            }
+            return name.startsWith(pattern) || name.endsWith(pattern)
+        })
+        const isHidden = hiddenIgnorePatterns.some((patternRaw) => {
+             if (!patternRaw) return false
+            const pattern = String(patternRaw)
+            if (pattern.includes('/') || pattern.startsWith('/')) {
+                const normPattern = normalizeRemotePath(pattern)
+                return normP === normPattern || normP.startsWith(normPattern + '/')
+            }
+            return name.startsWith(pattern) || name.endsWith(pattern)
+        })
+        return isIgnored || isHidden
+    }
+
+    try {
+        while (queue.length) {
+            const { path: dirPath, depth } = queue.shift()!
+            const normDir = normalizeRemotePath(dirPath)
+            if (seen.has(normDir)) continue
+            seen.add(normDir)
+
+            const res = await listFilesSafe(normDir)
+            if (!res.success || !Array.isArray(res.files)) continue
+
+            for (const item of res.files) {
+                const name = item.name
+                const itemPath = item.path || (normDir === '/' ? `/${name}` : `${normDir}/${name}`)
+                
+                if (shouldIgnore(itemPath, name)) continue
+
+                paths.push(itemPath)
+                
+                const fallbackType: 'file' | 'directory' = item && (item.isDirectory === true || item.type === 2) ? 'directory' : 'file'
+                const type = normalizeFileType(item.type, fallbackType)
+                
+                if (isDirectoryEntry(type) && depth < 6) {
+                    queue.push({ path: itemPath, depth: depth + 1 })
+                }
+            }
+            
+            processed++
+            if (processed % 50 === 0) await new Promise(r => setTimeout(r, 0))
+        }
+        setSearchIndex({ paths, lastIndexed: Date.now() })
+        console.log('Index built:', paths.length, 'items')
+    } catch (err) {
+        console.error('Indexing failed', err)
+    } finally {
+        setIsIndexing(false)
+    }
+  }
+
+  // Auto-build index on connect
+  useEffect(() => {
+    if (isConnected && !searchIndex && !isIndexing) {
+        buildIndex(currentPath || '/')
+    }
+  }, [isConnected, currentPath])
+
+  const deepLoadSearch = async (root: string, q: string, depthLimit: number, token: number) => {
+    // If we have an index, search it synchronously!
+    if (searchIndex && searchIndex.paths.length > 0) {
+        const qLower = q.toLowerCase()
+        const matches = searchIndex.paths.filter(p => {
+            const name = p.split('/').pop() || ''
+            return name.toLowerCase().includes(qLower)
+        })
+        
+        // Convert matches to FTPFile objects (mocked, since we only have paths)
+        // We'll need to fetch details if clicked, but for display we can infer name/path
+        const results: FTPFile[] = matches.map(p => ({
+            name: p.split('/').pop() || '',
+            path: p,
+            type: 'file', // We don't know for sure, assume file, clicking will resolve
+            size: 0,
+            modified: new Date()
+        }))
+        
+        setSearchResults(results)
+        setSearchStats({ scanned: searchIndex.paths.length, found: results.length })
+        return
+    }
+
+    // Fallback to crawl if no index
+    // ... existing crawl logic ...
+    // const posix = require('path').posix
+    const queue: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }]
+    const seen = new Set<string>()
+    let scanned = 0
+    let foundCount = 0
+
+    while (queue.length) {
+      if (token !== searchTokenRef.current) return
+
+      const { path: dirPath, depth } = queue.shift() as { path: string; depth: number }
+      const normDir = normalizeRemotePath(dirPath)
+      if (seen.has(normDir)) continue
+      seen.add(normDir)
+
+      // Add a small delay for the very first item to ensure UI can update to "Searching..."
+      if (scanned === 0) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+
+      const res = await listFilesSafe(normDir)
+      if (!res.success || !Array.isArray(res.files)) {
+        console.error('Search: failed to list', normDir, res.error)
+        scanned++
+        setSearchStats({ scanned, found: foundCount })
+        continue
+      }
+
+      // Check token again after await
+      if (token !== searchTokenRef.current) return
+
+      const kids: FTPFile[] = res.files.map((item: any) => {
+        const fallbackType: 'file' | 'directory' = item && (item.isDirectory === true || item.type === 2) ? 'directory' : 'file'
+        return {
+          name: item.name,
+          path: item.path || (normDir === '/' ? `/${item.name}` : `${normDir}/${item.name}`),
+          type: normalizeFileType(item.type, fallbackType),
+          size: Number(item.size ?? 0) || 0,
+          modified: item.modified ? new Date(item.modified) : (item.modifiedAt ? new Date(item.modifiedAt) : new Date())
+        }
+      })
+
+      // Update children immediately to show progress
+      setFolderChildren((prev) => ({ ...prev, [normDir]: kids })) 
+
+      const newFound: FTPFile[] = []
+      
+      // Cache the query lower case
+      const qLower = q.toLowerCase()
+
+      for (const k of kids) {
+        // Skip ignored items to speed up search
+        if (matchesIgnorePattern(k) || matchesHiddenPattern(k)) continue
+
+        // Simple case-insensitive match
+        if (k.name && k.name.toLowerCase().includes(qLower)) {
+          newFound.push(k)
+        }
+        if (isDirectoryEntry(k.type) && depth < depthLimit) {
+          queue.push({ path: k.path, depth: depth + 1 })
+        }
+      }
+
+      if (newFound.length > 0) {
+        foundCount += newFound.length
+        setSearchResults((prev) => {
+          // Avoid duplicates using Map for O(1) lookup instead of O(N) array scan
+          const existingMap = new Map(prev.map(f => [f.path, f]))
+          for (const f of newFound) {
+            if (!existingMap.has(f.path)) {
+              existingMap.set(f.path, f)
+            }
+          }
+          return Array.from(existingMap.values())
+        })
+      }
+
+      scanned++
+      setSearchStats({ scanned, found: foundCount })
+      
+      // Yield less frequently to speed up
+      if (scanned % 50 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+    }
+  }
+
   const preloadAll = async (rootPath: string) => {
     setError(null)
     try {
@@ -240,7 +480,7 @@ const FTPExplorer: React.FC = () => {
         walk(res.tree as any[])
         setFolderChildren(childrenMap)
       } else {
-        const rootRes = await runQueued(() => electronAPI.ftpListFiles(rootPath))
+        const rootRes = await listFilesSafe(rootPath)
         if (!rootRes.success || !rootRes.files) {
           setError(res.error || 'Failed to load all files')
           return
@@ -262,7 +502,7 @@ const FTPExplorer: React.FC = () => {
         const childrenMap: Record<string, FTPFile[]> = {}
         const dirs: string[] = top.filter(f => isDirectoryEntry(f.type)).map(f => f.path)
         for (const d of dirs) {
-          const subRes = await runQueued(() => electronAPI.ftpListFiles(d))
+          const subRes = await listFilesSafe(d)
           if (subRes.success && subRes.files) {
             const kids = subRes.files.map(toFile)
             childrenMap[d] = kids
@@ -279,7 +519,112 @@ const FTPExplorer: React.FC = () => {
     if (isConnected) {
       preloadAll(currentPath || '/')
     }
-  }, [isConnected])
+  }, [isConnected, currentPath])
+
+  useEffect(() => {
+    const q = String(nameQuery || '').trim().toLowerCase()
+    
+    // Reset if empty
+    if (!q) {
+      try { inFlightRef.current.clear() } catch {}
+      setLoadingChildren({})
+      searchTokenRef.current++
+      setMatchedPaths(new Set())
+      setSearchResults([])
+      setSearchStats({ scanned: 0, found: 0 })
+      setIsSearching(false)
+      return
+    }
+
+    if (!isConnected) return
+
+    // Start new search
+    const token = ++searchTokenRef.current
+    setSearchResults([])
+    setSearchStats({ scanned: 0, found: 0 })
+    setIsSearching(true)
+    
+    let cancelled = false
+    ;(async () => {
+      try {
+        const root = currentPath || '/'
+        await deepLoadSearch(root, q, 6, token)
+      } catch (err) {
+        console.error("Search error", err)
+      } finally {
+        if (!cancelled && token === searchTokenRef.current) {
+          setIsSearching(false)
+        }
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [nameQuery, isConnected, currentPath])
+
+  // Removed old effects that were split
+
+
+  const handleResultClick = async (file: FTPFile) => {
+    // onNameQueryChange(''); // Do not clear query immediately or overlay disappears
+
+    // Calculate ancestors to expand
+    const posix = require('path').posix
+    const expandSet = new Set<string>()
+    let cur = String(file.path || '/').replace(/\\/g, '/')
+    if (!cur.startsWith('/')) cur = '/' + cur
+    while (true) {
+      const dir = posix.dirname(cur)
+      if (!dir || dir === cur) break
+      expandSet.add(dir)
+      cur = dir
+      if (dir === '/' || dir === '') break
+    }
+    
+    // Add ancestors to expandedFolders
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      expandSet.forEach((d) => next.add(d))
+      return next
+    })
+
+    // Pre-load all ancestor folders to ensure they are populated in folderChildren
+    // Sort by depth (shortest path first)
+    const sortedExpand = Array.from(expandSet).sort((a, b) => a.length - b.length)
+    for (const dir of sortedExpand) {
+        if (!folderChildren[dir]) {
+            await loadChildrenIfNeeded(dir)
+        }
+    }
+    
+    // Force expand folders in state one by one to ensure rendering happens
+    for (const dir of sortedExpand) {
+        setExpandedFolders(prev => new Set([...prev, dir]))
+        // Small delay to allow React to render this level
+        await new Promise(r => setTimeout(r, 50))
+    }
+
+    // Scroll into view logic (wait for render)
+    setTimeout(() => {
+      const el = document.getElementById(`ftp-file-${file.path}`)
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        // Add a highlight flash
+        el.classList.add('bg-vscode-selection')
+        setTimeout(() => el.classList.remove('bg-vscode-selection'), 1500)
+      }
+    }, 500) // Increased delay to allow for expansion rendering
+
+    if (isDirectoryEntry(file.type)) {
+      if (!expandedFolders.has(file.path)) {
+        await toggleFolder(file)
+      }
+    } else {
+      await openFile(file)
+    }
+    
+    // Close search after action
+    if (onNameQueryChange) onNameQueryChange('')
+  }
 
   
 
@@ -499,7 +844,7 @@ const FTPExplorer: React.FC = () => {
     try {
       const targetPath = overridePath || currentPath || '/'
       console.log('FTPExplorer loadFiles', { targetPath })
-      const res = await runQueued(() => electronAPI.ftpListFiles(targetPath))
+      const res = await listFilesSafe(targetPath)
       if (res.success && res.files) {
         console.log('FTPExplorer loadFiles success', { count: res.files.length })
         const mapped: FTPFile[] = res.files.map((item: any) => {
@@ -594,7 +939,6 @@ const FTPExplorer: React.FC = () => {
   }
 
   const toggleFolder = async (file: FTPFile) => {
-    if (inFlightRef.current.has(file.path)) return
     const next = new Set(expandedFolders)
     if (next.has(file.path)) {
       next.delete(file.path)
@@ -606,11 +950,10 @@ const FTPExplorer: React.FC = () => {
       console.log('FTPExplorer folder expand', { path: file.path })
       if (!folderChildren[file.path]) {
         if (loadingChildren[file.path]) return
-        inFlightRef.current.add(file.path)
         setLoadingChildren((prev) => ({ ...prev, [file.path]: true }))
         try {
           console.log('FTPExplorer loadChildren start', { path: file.path })
-          const res = await runQueued(() => electronAPI.ftpListFiles(file.path))
+          const res = await listFilesSafe(file.path)
           if (res.success && res.files) {
             const mapped: FTPFile[] = res.files.map((item: any) => {
               const fallbackType: 'file' | 'directory' = item && item.isDirectory === true ? 'directory' : 'file'
@@ -633,14 +976,12 @@ const FTPExplorer: React.FC = () => {
           setError('Failed to load folder')
         } finally {
           setLoadingChildren((prev) => ({ ...prev, [file.path]: false }))
-          inFlightRef.current.delete(file.path)
         }
       }
     }
   }
 
   const expandFolder = async (file: FTPFile) => {
-    if (inFlightRef.current.has(file.path)) return
     if (expandedFolders.has(file.path)) return
     const next = new Set(expandedFolders)
     next.add(file.path)
@@ -648,11 +989,10 @@ const FTPExplorer: React.FC = () => {
     console.log('FTPExplorer folder expand (double-click only)', { path: file.path })
     if (!folderChildren[file.path]) {
       if (loadingChildren[file.path]) return
-      inFlightRef.current.add(file.path)
       setLoadingChildren((prev) => ({ ...prev, [file.path]: true }))
       try {
         console.log('FTPExplorer loadChildren start (double-click)', { path: file.path })
-        const res = await runQueued(() => electronAPI.ftpListFiles(file.path))
+        const res = await listFilesSafe(file.path)
         if (res.success && res.files) {
           const mapped: FTPFile[] = res.files.map((item: any) => {
             const fallbackType: 'file' | 'directory' = item && item.isDirectory === true ? 'directory' : 'file'
@@ -675,15 +1015,34 @@ const FTPExplorer: React.FC = () => {
         setError('Failed to load folder')
       } finally {
         setLoadingChildren((prev) => ({ ...prev, [file.path]: false }))
-        inFlightRef.current.delete(file.path)
       }
     }
   }
 
+  const hasDescendantMatch = (path: string, q: string): boolean => {
+    const kids = folderChildren[path] || []
+    for (const k of kids) {
+      const nm = String(k.name || '').toLowerCase()
+      if (nm.includes(q)) return true
+      if (isDirectoryEntry(k.type) && hasDescendantMatch(k.path, q)) return true
+    }
+    for (const p of matchedPaths) {
+      const norm = normalizeRemotePath(p)
+      const dir = normalizeRemotePath(path)
+      if (norm === dir || norm.startsWith(dir + '/')) return true
+    }
+    return false
+  }
   const renderFileTree = (files: FTPFile[]) => {
     const visible = files.filter((file) => {
       if (isHiddenInExplorer(file)) return false
       if (hideIgnoredInExplorer && isIgnoredForSync(file)) return false
+      const base = String(file.name || '')
+      const hasExt = /\.[^./]+$/.test(base)
+      const isHex = /^[a-f0-9]{12,64}$/i.test(base)
+      if (isHex && !hasExt) return false
+      const q = String(nameQuery || '').trim().toLowerCase()
+      // Filter removed to prevent tree from changing during search
       return true
     })
     const sorted = [...visible].sort((a, b) => {
@@ -697,12 +1056,13 @@ const FTPExplorer: React.FC = () => {
       const status = getStatusForPath(file.path)
       const statusTextClass = getStatusTextClass(status)
       return (
-        <div key={file.path} className="select-none">
+        <div key={file.path} id={`ftp-file-${file.path}`} className="select-none">
           <div
             className={`flex items-center gap-2 px-3 py-1 hover:bg-vscode-hover cursor-pointer transition-colors ${
               isIgnoredForSync(file) ? 'opacity-60' : ''
             }`}
             onClick={async () => {
+              searchTokenRef.current++
               // Simple, reliable behaviour:
               // - Single click on a folder toggles expand/collapse
               // - Single click on a file opens it
@@ -725,6 +1085,7 @@ const FTPExplorer: React.FC = () => {
               <span
                 onClick={async (e) => {
                   e.stopPropagation()
+                  searchTokenRef.current++
                   if (blockedRef.current.has(file.path)) return
                   blockedRef.current.add(file.path)
                   setTimeout(() => blockedRef.current.delete(file.path), 300)
@@ -739,12 +1100,10 @@ const FTPExplorer: React.FC = () => {
                     console.log('FTPExplorer folder expand (chevron)', { path: file.path })
                     if (!folderChildren[file.path]) {
                       if (loadingChildren[file.path]) return
-                      if (inFlightRef.current.has(file.path)) return
-                      inFlightRef.current.add(file.path)
                       setLoadingChildren((prev) => ({ ...prev, [file.path]: true }))
                       try {
                         console.log('FTPExplorer loadChildren start (chevron)', { path: file.path })
-                        const res = await runQueued(() => electronAPI.ftpListFiles(file.path))
+                        const res = await listFilesSafe(file.path)
                         if (res.success && res.files) {
                           const mapped: FTPFile[] = res.files.map((item: any) => {
                             const fallbackType: 'file' | 'directory' = item && item.isDirectory === true ? 'directory' : 'file'
@@ -767,7 +1126,6 @@ const FTPExplorer: React.FC = () => {
                         setError('Failed to load folder')
                       } finally {
                         setLoadingChildren((prev) => ({ ...prev, [file.path]: false }))
-                        inFlightRef.current.delete(file.path)
                       }
                     }
                   }
@@ -813,7 +1171,35 @@ const FTPExplorer: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col h-full vscode-scrollbar overflow-y-auto">
+    <div className="flex flex-col h-full vscode-scrollbar overflow-y-auto relative">
+      {nameQuery && (
+        <div className="absolute top-0 left-0 right-0 z-20 bg-vscode-sidebar border-b border-vscode-border shadow-lg max-h-[300px] overflow-y-auto">
+          {searchResults.map((file) => (
+            <button
+              key={`search-${file.path}`}
+              className="w-full text-left px-3 py-2 hover:bg-vscode-hover border-b border-vscode-border/30 last:border-0 flex items-center gap-2"
+              onClick={() => handleResultClick(file)}
+            >
+              {getFileIcon(file)}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm truncate">{file.name}</div>
+                <div className="text-[10px] text-vscode-text-muted truncate">{file.path}</div>
+              </div>
+            </button>
+          ))}
+          {searchResults.length === 0 && (
+            <div className="p-3 text-xs text-vscode-text-muted text-center">
+              {isSearching ? `Searching... (${searchStats.scanned} folders)` : 
+                (searchStats.scanned === 0 ? 'No results found' : `No matches found in ${searchStats.scanned} folders`)}
+            </div>
+          )}
+          {searchResults.length > 0 && isSearching && (
+             <div className="p-2 text-xs text-vscode-text-muted text-center border-t border-vscode-border/30">
+               Searching... ({searchStats.scanned} folders scanned)
+             </div>
+          )}
+        </div>
+      )}
       {!isConnected ? (
         <div className="flex flex-col items-center justify-center h-full p-4 text-center">
           <Server size={48} className="text-vscode-text-muted mb-4" />

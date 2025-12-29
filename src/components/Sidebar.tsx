@@ -10,6 +10,7 @@ import { electronAPI } from '../utils/electronAPI'
 const Sidebar: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'files' | 'search' | 'todo' | 'users' | 'settings' | 'history'>('files')
   const [panelWidth, setPanelWidth] = useState<number>(260)
+  const [nameQuery, setNameQuery] = useState<string>('')
 
   const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -104,12 +105,17 @@ const Sidebar: React.FC = () => {
         {activeTab === 'files' && (
           <div className="flex flex-col h-full">
             <div className="p-3 border-b border-vscode-border">
-              <h3 className="text-sm font-semibold text-vscode-text flex items-center gap-2">
-                <Server size={16} />
-                FTP Explorer
-              </h3>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={nameQuery}
+                  onChange={(e) => setNameQuery(e.target.value)}
+                  placeholder="Search file names"
+                  className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+                />
+              </div>
             </div>
-            <FTPExplorer />
+            <FTPExplorer nameQuery={nameQuery} onNameQueryChange={setNameQuery} />
           </div>
         )}
 

@@ -69,8 +69,13 @@ function App() {
       if (action === 'menu-save-file') {
         const activeId = state.activeFile
         if (!activeId) return
-        const file = state.openFiles.find(f => f.id === activeId)
+        let file = state.openFiles.find(f => f.id === activeId)
         if (!file) return
+        if (file.kind === 'preview') {
+          const codeFile = state.openFiles.find(f => f.kind !== 'preview' && f.path === file.path)
+          if (!codeFile) return
+          file = codeFile
+        }
         const res = await electronAPI.localSaveFile(file.path, file.content)
         if (res.success) {
           useEditorStore.getState().setFileDirty(file.id, false)
@@ -103,8 +108,13 @@ function App() {
       } else if (action === 'menu-save-and-sync') {
         const activeId = state.activeFile
         if (!activeId) return
-        const file = state.openFiles.find(f => f.id === activeId)
+        let file = state.openFiles.find(f => f.id === activeId)
         if (!file) return
+        if (file.kind === 'preview') {
+          const codeFile = state.openFiles.find(f => f.kind !== 'preview' && f.path === file.path)
+          if (!codeFile) return
+          file = codeFile
+        }
 
         const uid = state.currentUserId
         let newHash: string | null = null
@@ -177,11 +187,16 @@ function App() {
       } else if (action === 'menu-save-as') {
         const activeId = state.activeFile
         if (!activeId) return
-        const file = state.openFiles.find(f => f.id === activeId)
+        let file = state.openFiles.find(f => f.id === activeId)
         if (!file) return
+        if (file.kind === 'preview') {
+          const codeFile = state.openFiles.find(f => f.kind !== 'preview' && f.path === file.path)
+          if (!codeFile) return
+          file = codeFile
+        }
         const nextPath = window.prompt('Enter new remote path for Save As', file.path)
         if (!nextPath || nextPath.trim() === '') return
-        const res = await electronAPI.ftpUploadFile(file.content, nextPath.trim())
+        const res = await electronAPI.publishFile?.({ remotePath: nextPath.trim(), content: file.content, summary: 'Save As' })
         if (res.success) {
           const parts = nextPath.trim().split('/')
           const newName = parts[parts.length - 1] || file.name

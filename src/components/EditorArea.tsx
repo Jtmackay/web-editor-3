@@ -1829,37 +1829,108 @@ const EditorArea: React.FC = () => {
   const { activeFile, openFiles } = useEditorStore()
   const currentFile = openFiles.find((f) => f.id === activeFile) || null
   const previewFiles = openFiles.filter((f) => f.kind === 'preview')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [splitState, setSplitState] = useState<{ fileId: string | null; leftWidth: number; dragging: boolean } | null>(null)
+  const startXRef = useRef<number>(0)
+  const startWidthRef = useRef<number>(0)
+
+  useEffect(() => {
+    const onSplit = (e: Event) => {
+      try {
+        const d = (e as CustomEvent).detail as any
+        const fid = d && typeof d.fileId === 'string' ? d.fileId : null
+        if (!fid) return
+        setSplitState({ fileId: fid, leftWidth: Math.max(360, Math.floor((containerRef.current?.clientWidth || 1200) * 0.45)), dragging: false })
+      } catch {}
+    }
+    const onClose = () => setSplitState(null)
+    window.addEventListener('split:view', onSplit as any)
+    window.addEventListener('split:close', onClose as any)
+    return () => {
+      window.removeEventListener('split:view', onSplit as any)
+      window.removeEventListener('split:close', onClose as any)
+    }
+  }, [])
+
+  const beginDrag = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!splitState) return
+    const container = containerRef.current
+    if (!container) return
+    startXRef.current = e.clientX
+    startWidthRef.current = splitState.leftWidth
+    setSplitState((prev) => (prev ? { ...prev, dragging: true } : prev))
+    try {
+      const iframe = container.querySelector('iframe[data-role="browser-preview-iframe"]') as HTMLIFrameElement | null
+      if (iframe) iframe.style.pointerEvents = 'none'
+    } catch {}
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startXRef.current
+      const newW = Math.min(Math.max(320, startWidthRef.current + dx), (container.clientWidth || 1200) - 320)
+      setSplitState((prev) => (prev ? { ...prev, leftWidth: newW } : prev))
+    }
+    const onUp = () => {
+      setSplitState((prev) => (prev ? { ...prev, dragging: false } : prev))
+      try {
+        const iframe = container.querySelector('iframe[data-role="browser-preview-iframe"]') as HTMLIFrameElement | null
+        if (iframe) iframe.style.pointerEvents = ''
+      } catch {}
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-vscode-bg">
       <EditorTabs />
-      <div className="flex-1 relative">
+      <div className="flex-1 relative" ref={containerRef}>
         {currentFile ? (
           <>
-            {/* Keep the Monaco editor mounted at all times; just hide it when a preview tab is active */}
-            <div
-              className={`absolute inset-0 ${
-                currentFile.kind === 'preview' ? 'hidden' : 'block'
-              }`}
-            >
-              <MonacoEditor />
-            </div>
-
-            {/* Keep each preview iframe mounted while its tab is open; toggle visibility on tab switch */}
-            {previewFiles.map((file) => (
-              <div
-                key={file.id}
-                className={`absolute inset-0 ${
-                  file.id === activeFile && file.previewUrl ? 'block' : 'hidden'
-                }`}
-              >
-                <BrowserPreview
-                  url={file.previewUrl || ''}
-                  sourcePath={file.path}
-                  isActive={file.id === activeFile}
-                />
+            {splitState && previewFiles.length > 0 ? (
+              <div className="absolute inset-0 flex">
+                <div className="relative border-r border-vscode-border" style={{ width: splitState.leftWidth, minWidth: 320 }}>
+                  <MonacoEditor fileId={splitState.fileId || undefined} />
+                </div>
+                <div className="w-1.5 cursor-col-resize bg-vscode-border" onMouseDown={beginDrag} />
+                <div className="flex-1 relative min-w-[320px]">
+                  {previewFiles.map((file) => (
+                    <div key={file.id} className={`${file.id === activeFile && file.previewUrl ? 'block' : 'hidden'} h-full w-full`}>
+                      <BrowserPreview
+                        url={file.previewUrl || ''}
+                        sourcePath={file.path}
+                        isActive={true}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
+            ) : (
+              <>
+                <div
+                  className={`absolute inset-0 ${
+                    currentFile.kind === 'preview' ? 'hidden' : 'block'
+                  }`}
+                >
+                  <MonacoEditor />
+                </div>
+                {previewFiles.map((file) => (
+                  <div
+                    key={file.id}
+                    className={`absolute inset-0 ${
+                      file.id === activeFile && file.previewUrl ? 'block' : 'hidden'
+                    }`}
+                  >
+                    <BrowserPreview
+                      url={file.previewUrl || ''}
+                      sourcePath={file.path}
+                      isActive={file.id === activeFile}
+                    />
+                  </div>
+                ))}
+              </>
+            )}
           </>
         ) : (
           <div className="flex items-center justify-center h-full text-vscode-text-muted">
