@@ -8,7 +8,7 @@ import HistoryPanel from './HistoryPanel'
 import { electronAPI } from '../utils/electronAPI'
 
 const Sidebar: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'todo' | 'users' | 'settings' | 'history'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'search' | 'todo' | 'users' | 'settings' | 'history' | null>('files')
   const [panelWidth, setPanelWidth] = useState<number>(260)
   const [nameQuery, setNameQuery] = useState<string>('')
 
@@ -38,12 +38,20 @@ const Sidebar: React.FC = () => {
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  const toggleTab = (tab: 'files' | 'search' | 'todo' | 'users' | 'settings' | 'history') => {
+    if (activeTab === tab) {
+      setActiveTab(null)
+    } else {
+      setActiveTab(tab)
+    }
+  }
+
   return (
     <div className="flex h-full bg-vscode-sidebar border-r border-vscode-border">
       {/* Activity Bar */}
       <div className="w-12 bg-vscode-activityBar flex flex-col items-center py-2 space-y-2">
         <button
-          onClick={() => setActiveTab('files')}
+          onClick={() => toggleTab('files')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'files' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
           }`}
@@ -52,7 +60,7 @@ const Sidebar: React.FC = () => {
           <FileText size={20} />
         </button>
         <button
-          onClick={() => setActiveTab('search')}
+          onClick={() => toggleTab('search')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'search' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
           }`}
@@ -61,7 +69,7 @@ const Sidebar: React.FC = () => {
           <Search size={20} />
         </button>
         <button
-          onClick={() => setActiveTab('todo')}
+          onClick={() => toggleTab('todo')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'todo'
               ? 'bg-vscode-selection text-white'
@@ -72,7 +80,7 @@ const Sidebar: React.FC = () => {
           <ListChecks size={20} />
         </button>
         <button
-          onClick={() => setActiveTab('history')}
+          onClick={() => toggleTab('history')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'history' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
           }`}
@@ -81,7 +89,7 @@ const Sidebar: React.FC = () => {
           <History size={20} />
         </button>
         <button
-          onClick={() => setActiveTab('users')}
+          onClick={() => toggleTab('users')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'users' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
           }`}
@@ -90,7 +98,7 @@ const Sidebar: React.FC = () => {
           <Users size={20} />
         </button>
         <button
-          onClick={() => setActiveTab('settings')}
+          onClick={() => toggleTab('settings')}
           className={`p-2 rounded transition-colors ${
             activeTab === 'settings' ? 'bg-vscode-selection text-white' : 'text-vscode-text-muted hover:bg-vscode-hover'
           }`}
@@ -101,75 +109,79 @@ const Sidebar: React.FC = () => {
       </div>
 
       {/* Side Panel */}
-      <div className="flex flex-col h-full flex-shrink-0" style={{ width: panelWidth }}>
-        {activeTab === 'files' && (
-          <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-vscode-border">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={nameQuery}
-                  onChange={(e) => setNameQuery(e.target.value)}
-                  placeholder="Search file names"
-                  className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
-                />
+      {activeTab && (
+        <div className="flex flex-col h-full flex-shrink-0" style={{ width: panelWidth }}>
+          {activeTab === 'files' && (
+            <div className="flex flex-col h-full">
+              <div className="p-3 border-b border-vscode-border">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={nameQuery}
+                    onChange={(e) => setNameQuery(e.target.value)}
+                    placeholder="Search file names"
+                    className="flex-1 px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-xs focus:outline-none focus:border-vscode-accent"
+                  />
+                </div>
+              </div>
+              <FTPExplorer nameQuery={nameQuery} onNameQueryChange={setNameQuery} />
+            </div>
+          )}
+
+          {activeTab === 'search' && (
+            <div className="flex flex-col h-full">
+              <div className="p-3 border-b border-vscode-border">
+                <h3 className="text-sm font-semibold text-vscode-text">Search</h3>
+              </div>
+              <SearchPanel />
+            </div>
+          )}
+
+          {activeTab === 'todo' && (
+            <div className="flex flex-col h-full">
+              <div className="p-3 border-b border-vscode-border">
+                <h3 className="text-sm font-semibold text-vscode-text">To Do</h3>
+              </div>
+              <TodoPanel />
+            </div>
+          )}
+          
+          {activeTab === 'users' && (
+            <div className="flex flex-col h-full">
+              <div className="p-3 border-b border-vscode-border">
+                <h3 className="text-sm font-semibold text-vscode-text">Team Members</h3>
+              </div>
+              <UserPresence />
+            </div>
+          )}
+          
+          {activeTab === 'settings' && (
+            <div className="flex flex-col h-full min-h-0">
+              <div className="p-3 border-b border-vscode-border flex-shrink-0">
+                <h3 className="text-sm font-semibold text-vscode-text">Settings</h3>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <SettingsPanel />
               </div>
             </div>
-            <FTPExplorer nameQuery={nameQuery} onNameQueryChange={setNameQuery} />
-          </div>
-        )}
-
-        {activeTab === 'search' && (
-          <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-vscode-border">
-              <h3 className="text-sm font-semibold text-vscode-text">Search</h3>
+          )}
+          {activeTab === 'history' && (
+            <div className="flex flex-col h-full">
+              <div className="p-3 border-b border-vscode-border">
+                <h3 className="text-sm font-semibold text-vscode-text">History</h3>
+              </div>
+              <HistoryPanel />
             </div>
-            <SearchPanel />
-          </div>
-        )}
-
-        {activeTab === 'todo' && (
-          <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-vscode-border">
-              <h3 className="text-sm font-semibold text-vscode-text">To Do</h3>
-            </div>
-            <TodoPanel />
-          </div>
-        )}
-        
-        {activeTab === 'users' && (
-          <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-vscode-border">
-              <h3 className="text-sm font-semibold text-vscode-text">Team Members</h3>
-            </div>
-            <UserPresence />
-          </div>
-        )}
-        
-        {activeTab === 'settings' && (
-          <div className="flex flex-col h-full min-h-0">
-            <div className="p-3 border-b border-vscode-border flex-shrink-0">
-              <h3 className="text-sm font-semibold text-vscode-text">Settings</h3>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <SettingsPanel />
-            </div>
-          </div>
-        )}
-        {activeTab === 'history' && (
-          <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-vscode-border">
-              <h3 className="text-sm font-semibold text-vscode-text">History</h3>
-            </div>
-            <HistoryPanel />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
       {/* Resizer */}
-      <div
-        className="w-[3px] cursor-col-resize self-stretch bg-transparent hover:bg-vscode-border/80 active:bg-vscode-border"
-        onMouseDown={handleResizeMouseDown}
-      />
+      {activeTab && (
+        <div
+          className="w-[3px] cursor-col-resize self-stretch bg-transparent hover:bg-vscode-border/80 active:bg-vscode-border"
+          onMouseDown={handleResizeMouseDown}
+        />
+      )}
     </div>
   )
 }

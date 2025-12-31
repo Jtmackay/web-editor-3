@@ -177,6 +177,7 @@ const FTPExplorer: React.FC<{ nameQuery?: string; onNameQueryChange?: (q: string
 
   const openPreviewInTab = async (file: FTPFile) => {
     try {
+      try { window.dispatchEvent(new CustomEvent('split:close')) } catch {}
       const url = await buildPreviewUrl(file)
       if (!url) return
 
@@ -568,16 +569,21 @@ const FTPExplorer: React.FC<{ nameQuery?: string; onNameQueryChange?: (q: string
     // onNameQueryChange(''); // Do not clear query immediately or overlay disappears
 
     // Calculate ancestors to expand
-    const posix = require('path').posix
     const expandSet = new Set<string>()
     let cur = String(file.path || '/').replace(/\\/g, '/')
     if (!cur.startsWith('/')) cur = '/' + cur
-    while (true) {
-      const dir = posix.dirname(cur)
-      if (!dir || dir === cur) break
-      expandSet.add(dir)
-      cur = dir
-      if (dir === '/' || dir === '') break
+    
+    // Simple path walking without relying on node 'path' module
+    while (cur.length > 1) { // Stop at root '/'
+      const lastSlashIndex = cur.lastIndexOf('/')
+      if (lastSlashIndex <= 0) {
+        // Parent is root
+        expandSet.add('/')
+        break
+      }
+      const parent = cur.slice(0, lastSlashIndex)
+      expandSet.add(parent)
+      cur = parent
     }
     
     // Add ancestors to expandedFolders

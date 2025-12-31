@@ -14,9 +14,34 @@ class FTPService {
     this.client.ftp.timeout = 30000 // 30 seconds
     
     // Use default transfer preparation from library
+    
+    // Serialization queue to prevent concurrent commands on single control socket
+    this._queue = Promise.resolve()
+  }
+
+  /**
+   * Execute a function sequentially to avoid FTP client race conditions
+   * @template T
+   * @param {() => Promise<T>} fn 
+   * @returns {Promise<T>}
+   */
+  async _runSerialized(fn) {
+    // Chain the operation
+    const resultPromise = this._queue.then(() => fn())
+    
+    // Update the queue to wait for this operation (success or fail)
+    // We catch errors in the queue chain so it doesn't break for future requests
+    this._queue = resultPromise.then(() => {}).catch(() => {})
+    
+    return resultPromise
   }
 
   async ensureConnected() {
+    // This is usually called inside other serialized methods, but if called directly
+    // it should probably be serialized too. However, since it's a helper,
+    // we assume the caller handles serialization if they are public methods.
+    // If ensureConnected is called from within a serialized block, we don't want to deadlock.
+    // So we DON'T serialize this internal helper.
     try {
       if (!this.connected || this.client.closed) {
         const cfg = this.currentConnection
@@ -42,61 +67,81 @@ class FTPService {
   }
 
   async connect(config) {
-    try {
-      // Close existing connection if any
-      if (this.connected) {
-        await this.disconnect()
+    return this._runSerialized(async () => {
+      try {
+        // Close existing connection if any
+        if (this.connected) {
+          // We call the internal disconnect logic directly to avoid double-queueing
+          // or we can just rely on this block.
+          // Since disconnect() is also serialized, calling it here recursively would deadlock
+          // if we used the same queue.
+          // BUT since we are inside the callback of the queue, we own the lock.
+          // Calling another serialized method would append to the end of the queue,
+          // which would never run because we are waiting for THIS function to finish.
+          // DEADLOCK WARNING.
+          
+          // SOLUTION: Refactor the core logic into _internal methods and wrap public ones.
+          // Or inline the logic. Inlining for now.
+          try {
+            await this.client.close()
+          } catch (e) { console.error('Disconnect error during connect', e) }
+          this.connected = false
+          this.currentConnection = null
+        }
+  
+        const connectionOptions = {
+          host: config.host,
+          port: config.port || 21,
+          user: config.username,
+          password: config.password,
+          secure: config.secure || false,
+          secureOptions: config.secureOptions || {},
+          passive: config.passive !== false // Default to passive mode
+        }
+  
+        console.log(`Connecting to FTP server: ${config.host}:${config.port}`)
+        
+        await this.client.access(connectionOptions)
+        
+        this.connected = true
+        this.currentConnection = config
+        
+        console.log('Successfully connected to FTP server')
+        
+        // Change to default path if specified
+        if (config.defaultPath && config.defaultPath !== '/') {
+          await this.client.cd(config.defaultPath)
+        }
+        
+        return true
+      } catch (error) {
+        console.error('FTP connection failed:', error)
+        this.connected = false
+        throw new Error(`FTP connection failed: ${error.message}`)
       }
-
-      const connectionOptions = {
-        host: config.host,
-        port: config.port || 21,
-        user: config.username,
-        password: config.password,
-        secure: config.secure || false,
-        secureOptions: config.secureOptions || {},
-        passive: config.passive !== false // Default to passive mode
-      }
-
-      console.log(`Connecting to FTP server: ${config.host}:${config.port}`)
-      
-      await this.client.access(connectionOptions)
-      
-      this.connected = true
-      this.currentConnection = config
-      
-      console.log('Successfully connected to FTP server')
-      
-      // Change to default path if specified
-      if (config.defaultPath && config.defaultPath !== '/') {
-        await this.client.cd(config.defaultPath)
-      }
-      
-      return true
-    } catch (error) {
-      console.error('FTP connection failed:', error)
-      this.connected = false
-      throw new Error(`FTP connection failed: ${error.message}`)
-    }
+    })
   }
 
   async disconnect() {
-    try {
-      if (this.connected) {
-        await this.client.close()
-        this.connected = false
-        this.currentConnection = null
-        console.log('Disconnected from FTP server')
+    return this._runSerialized(async () => {
+      try {
+        if (this.connected) {
+          await this.client.close()
+          this.connected = false
+          this.currentConnection = null
+          console.log('Disconnected from FTP server')
+        }
+      } catch (error) {
+        console.error('Error disconnecting from FTP:', error)
+        throw error
       }
-    } catch (error) {
-      console.error('Error disconnecting from FTP:', error)
-      throw error
-    }
+    })
   }
 
   async listFiles(remotePath = '/') {
-    const attempt = async () => {
-      await this.ensureConnected()
+    return this._runSerialized(async () => {
+      const attempt = async () => {
+        await this.ensureConnected()
       console.log(`Listing files in: ${remotePath}`)
       const files = []
       const sanitized = String(remotePath).replace(/\\/g, '/')
@@ -150,9 +195,11 @@ class FTPService {
         throw new Error(`Failed to list files: ${error2.message}`)
       }
     }
+    })
   }
 
   async listAll(remotePath = '/') {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -181,9 +228,11 @@ class FTPService {
       return out
     }
     return await build(remotePath)
+    })
   }
 
   async downloadFile(remotePath, localPath = null) {
+    return this._runSerialized(async () => {
     await this.ensureConnected()
 
     try {
@@ -235,9 +284,11 @@ class FTPService {
         throw new Error(`Failed to download file: ${error.message}`)
       }
     }
+    })
   }
 
   async uploadFile(localPath, remotePath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -297,9 +348,11 @@ class FTPService {
       console.error('Error uploading file:', error)
       throw new Error(`Failed to upload file: ${error.message}`)
     }
+    })
   }
 
   async createDirectory(remotePath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -312,9 +365,11 @@ class FTPService {
       console.error('Error creating directory:', error)
       throw new Error(`Failed to create directory: ${error.message}`)
     }
+    })
   }
 
   async deleteFile(remotePath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -327,9 +382,11 @@ class FTPService {
       console.error('Error deleting file:', error)
       throw new Error(`Failed to delete file: ${error.message}`)
     }
+    })
   }
 
   async deleteDirectory(remotePath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -342,9 +399,11 @@ class FTPService {
       console.error('Error deleting directory:', error)
       throw new Error(`Failed to delete directory: ${error.message}`)
     }
+    })
   }
 
   async rename(oldPath, newPath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -357,9 +416,11 @@ class FTPService {
       console.error('Error renaming:', error)
       throw new Error(`Failed to rename: ${error.message}`)
     }
+    })
   }
 
   async getFileSize(remotePath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -371,9 +432,11 @@ class FTPService {
       console.error('Error getting file size:', error)
       throw new Error(`Failed to get file size: ${error.message}`)
     }
+    })
   }
 
   async exists(remotePath) {
+    return this._runSerialized(async () => {
     if (!this.connected) {
       throw new Error('Not connected to FTP server')
     }
@@ -389,6 +452,7 @@ class FTPService {
         return { exists: false }
       }
     }
+    })
   }
 
   isConnected() {

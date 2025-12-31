@@ -8,16 +8,16 @@ export default {
     extend: {
       colors: {
         vscode: {
-          bg: '#1e1e1e',
+          bg: '#111111ff',
           sidebar: '#252526',
-          activityBar: '#2c2c2c',
-          statusBar: '#007acc',
+          activityBar: '#060606a9',
+          statusBar: 'rgba(13, 188, 121, 0.82)',
           border: '#3c3c3c',
-          text: '#cccccc',
+          text: '#ffffffff',
           textMuted: '#969696',
           hover: '#2a2d2e',
-          selection: '#264f78',
-          accent: '#007acc',
+          selection: 'rgb(13, 188, 121)',
+          accent: 'rgb(13, 188, 121)',
         }
       },
       fontFamily: {

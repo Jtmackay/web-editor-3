@@ -34,7 +34,7 @@ const MonacoEditor: React.FC<{ fileId?: string }> = ({ fileId }) => {
     // Configure editor options to match VSCode
     editor.updateOptions({
       fontSize: 14,
-      fontFamily: 'Monaco, Menlo, Ubuntu Mono, monospace',
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
       lineNumbers: 'on',
       renderLineHighlight: 'line',
       scrollBeyondLastLine: false,

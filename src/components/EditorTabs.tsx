@@ -65,7 +65,7 @@ const EditorTabs: React.FC = () => {
     await electronAPI.openExternalUrl(url)
   }
 
-  const handleViewInTab = async (file: EditorFile) => {
+  const ensurePreviewOpen = async (file: EditorFile) => {
     const path = file.path || ''
     const url = await buildPreviewUrlForPath(path)
     if (!url) return
@@ -92,6 +92,11 @@ const EditorTabs: React.FC = () => {
       previewUrl: url
     })
     editor.setActiveFile(previewId)
+  }
+
+  const handleViewInTab = async (file: EditorFile) => {
+    try { window.dispatchEvent(new CustomEvent('split:close')) } catch {}
+    await ensurePreviewOpen(file)
   }
 
   const computeContentHash = async (content: string): Promise<string> => {
@@ -198,9 +203,12 @@ const EditorTabs: React.FC = () => {
           key={file.id}
           className={`flex items-center gap-2 px-3 py-2 border-r border-vscode-border cursor-pointer transition-colors ${
             activeFile === file.id
-              ? 'bg-vscode-bg text-vscode-text'
+              ? 'text-vscode-text'
               : 'bg-vscode-sidebar text-vscode-text-muted hover:bg-vscode-hover'
           }`}
+          style={{
+            backgroundColor: activeFile === file.id ? 'rgba(13, 188, 121, 0.82)' : undefined
+          }}
           onClick={async () => {
             setActiveFile(file.id)
             if (!file.kind || file.kind === 'code') {
@@ -247,8 +255,9 @@ const EditorTabs: React.FC = () => {
         >
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
-            onClick={() => {
+            onClick={async () => {
               try {
+                await ensurePreviewOpen(contextMenu.file)
                 window.dispatchEvent(
                   new CustomEvent('split:view', { detail: { fileId: contextMenu.file.id } })
                 )
