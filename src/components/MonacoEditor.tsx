@@ -8,6 +8,7 @@ const MonacoEditor: React.FC<{ fileId?: string }> = ({ fileId }) => {
   const editorRef = useRef<any>(null)
   const changeTimerRef = useRef<number | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [showAccordionDialog, setShowAccordionDialog] = useState(false)
   const findOpenRef = useRef<boolean>(false)
 
   const targetId = fileId || activeFile
@@ -185,25 +186,91 @@ const MonacoEditor: React.FC<{ fileId?: string }> = ({ fileId }) => {
       />
       {contextMenu && (
         <div
-          className="fixed z-[250] bg-vscode-sidebar border border-vscode-border rounded shadow-lg text-sm"
+          className="fixed z-[250] bg-vscode-sidebar border border-vscode-border rounded shadow-lg text-sm py-1 min-w-[160px]"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
-            onClick={() => {
-              setContextMenu(null)
-              try { window.dispatchEvent(new CustomEvent('open-image-picker-editor')) } catch {}
-            }}
-          >
-            Insert Image
-          </button>
+          <div className="relative group">
+            <button
+              className="flex items-center justify-between w-full text-left px-3 py-1 hover:bg-vscode-hover"
+            >
+              <span>Insert</span>
+              <span className="text-[10px] opacity-70">▶</span>
+            </button>
+            {/* Submenu */}
+            <div className="absolute left-full top-0 hidden group-hover:block bg-vscode-sidebar border border-vscode-border rounded shadow-lg min-w-[160px] py-1 -ml-1">
+              <button
+                className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+                onClick={() => {
+                  setContextMenu(null)
+                  setShowAccordionDialog(true)
+                }}
+              >
+                Accordion
+              </button>
+              <button
+                className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
+                onClick={() => {
+                  setContextMenu(null)
+                  try { window.dispatchEvent(new CustomEvent('open-image-picker-editor')) } catch {}
+                }}
+              >
+                Image
+              </button>
+            </div>
+          </div>
+
+          <div className="h-px bg-vscode-border/50 my-1 mx-2"></div>
+
           <button
             className="block w-full text-left px-3 py-1 hover:bg-vscode-hover"
             onClick={() => setContextMenu(null)}
           >
             Cancel
           </button>
+        </div>
+      )}
+
+      {showAccordionDialog && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={() => setShowAccordionDialog(false)}>
+          <div className="bg-vscode-sidebar border border-vscode-border p-4 rounded shadow-lg w-96" onClick={e => e.stopPropagation()}>
+            <h3 className="text-vscode-text font-bold mb-4">Insert Accordion</h3>
+            <form onSubmit={(e) => {
+              e.preventDefault()
+              const formData = new FormData(e.currentTarget)
+              const title = formData.get('title') as string
+              let content = formData.get('content') as string
+              const wrapInParagraph = formData.get('wrapInParagraph') === 'on'
+              
+              if (wrapInParagraph) {
+                content = `<p>${content}</p>`
+              }
+              
+              const html = `<div class="accordion"> \n   <h2 onclick="toggleAccordion(this)">${title}<span class="arrow">▼</span></h2> \n   <div class="accordion-content"> \n     ${content} \n   </div> \n </div>`
+              
+              if (editorRef.current) {
+                  editorRef.current.trigger('keyboard', 'type', { text: html })
+              }
+              setShowAccordionDialog(false)
+            }}>
+              <div className="mb-3">
+                <label className="block text-vscode-text-muted text-xs mb-1">Header</label>
+                <input name="title" autoFocus className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-sm focus:outline-none focus:border-vscode-accent text-vscode-text" />
+              </div>
+              <div className="mb-3">
+                <label className="block text-vscode-text-muted text-xs mb-1">Content</label>
+                <textarea name="content" rows={3} className="w-full px-2 py-1 bg-vscode-bg border border-vscode-border rounded text-sm focus:outline-none focus:border-vscode-accent text-vscode-text" />
+              </div>
+              <div className="mb-4 flex items-center gap-2">
+                <input type="checkbox" id="wrapInParagraph" name="wrapInParagraph" className="bg-vscode-bg border border-vscode-border rounded" />
+                <label htmlFor="wrapInParagraph" className="text-vscode-text text-sm select-none">Wrap content in paragraph</label>
+              </div>
+              <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowAccordionDialog(false)} className="px-3 py-1 text-sm text-vscode-text hover:bg-vscode-hover rounded">Cancel</button>
+                  <button type="submit" className="px-3 py-1 text-sm bg-vscode-selection text-white rounded hover:bg-opacity-90">Insert</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
